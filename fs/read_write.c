@@ -419,6 +419,27 @@ static ssize_t new_sync_read(struct file *filp, char __user *buf, size_t len, lo
 	return ret;
 }
 
+static ssize_t new_sync_read_xrp(struct file *filp, char __user *data_buf, size_t len, loff_t *ppos, unsigned int bpf_fd, char __user *scratch_buf)
+{
+	struct iovec iov = { .iov_base = data_buf, .iov_len = len };
+	struct kiocb kiocb;
+	struct iov_iter iter;
+	ssize_t ret;
+
+	init_sync_kiocb(&kiocb, filp);
+	kiocb.ki_pos = (ppos ? *ppos : 0);
+	kiocb.xrp_enabled = true;
+	kiocb.xrp_scratch_buf = scratch_buf;
+	kiocb.xrp_bpf_fd = bpf_fd;
+	iov_iter_init(&iter, READ, &iov, 1, len);
+
+	ret = call_read_iter(filp, &kiocb, &iter);
+	BUG_ON(ret == -EIOCBQUEUED);
+	if (ppos)
+		*ppos = kiocb.ki_pos;
+	return ret;
+}
+
 static int warn_unsupported(struct file *file, const char *op)
 {
 	pr_warn_ratelimited(
@@ -494,6 +515,39 @@ ssize_t vfs_read(struct file *file, char __user *buf, size_t count, loff_t *pos)
 		ret = file->f_op->read(file, buf, count, pos);
 	else if (file->f_op->read_iter)
 		ret = new_sync_read(file, buf, count, pos);
+	else
+		ret = -EINVAL;
+	if (ret > 0) {
+		fsnotify_access(file);
+		add_rchar(current, ret);
+	}
+	inc_syscr(current);
+	return ret;
+}
+
+ssize_t vfs_read_xrp(struct file *file, char __user *data_buf, size_t count, loff_t *pos, unsigned int bpf_fd, char __user *scratch_buf)
+{
+	ssize_t ret;
+
+	if (!(file->f_mode & FMODE_READ))
+		return -EBADF;
+	if (!(file->f_mode & FMODE_CAN_READ))
+		return -EINVAL;
+	if (unlikely(!access_ok(data_buf, count)))
+		return -EFAULT;
+	if (unlikely(!access_ok(scratch_buf, PAGE_SIZE)))
+		return -EFAULT;
+
+	ret = rw_verify_area(READ, file, pos, count);
+	if (ret)
+		return ret;
+	if (count > MAX_RW_COUNT)
+		count =  MAX_RW_COUNT;
+
+	if (file->f_op->read)
+		ret = file->f_op->read(file, data_buf, count, pos);
+	else if (file->f_op->read_iter)
+		ret = new_sync_read_xrp(file, data_buf, count, pos, bpf_fd, scratch_buf);
 	else
 		ret = -EINVAL;
 	if (ret > 0) {
@@ -690,10 +744,44 @@ ssize_t ksys_pread64(unsigned int fd, char __user *buf, size_t count,
 	return ret;
 }
 
+ssize_t ksys_read_xrp(unsigned int fd, char __user *data_buf,
+                      size_t count, loff_t pos, unsigned int bpf_fd, char __user *scratch_buf)
+{
+	struct fd f;
+	ssize_t ret = -EBADF;
+
+	if (pos < 0)
+		return -EINVAL;
+
+	f = fdget(fd);
+	if (f.file) {
+		ret = -ESPIPE;
+		if (f.file->f_mode & FMODE_PREAD)
+			ret = vfs_read_xrp(f.file, data_buf, count, &pos, bpf_fd, scratch_buf);
+		fdput(f);
+	}
+
+	return ret;
+}
+
 SYSCALL_DEFINE4(pread64, unsigned int, fd, char __user *, buf,
 			size_t, count, loff_t, pos)
 {
 	return ksys_pread64(fd, buf, count, pos);
+}
+
+SYSCALL_DEFINE6(read_xrp, unsigned int, fd, char __user *, data_buf,
+			size_t, count, loff_t, pos, unsigned int, bpf_fd, char __user *, scratch_buf)
+{
+	if ((((uint64_t) data_buf) & (PAGE_SIZE - 1)) != 0) {
+		printk("read_xrp: data buffer is not 4KB aligned\n");
+		return -EINVAL;
+	}
+	if ((((uint64_t) scratch_buf) & (PAGE_SIZE - 1)) != 0) {
+		printk("read_xrp: scratch buffer is not 4KB aligned\n");
+		return -EINVAL;
+	}
+	return ksys_read_xrp(fd, data_buf, count, pos, bpf_fd, scratch_buf);
 }
 
 ssize_t ksys_pwrite64(unsigned int fd, const char __user *buf,

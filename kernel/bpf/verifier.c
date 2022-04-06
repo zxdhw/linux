@@ -3121,6 +3121,9 @@ static int check_ctx_access(struct bpf_verifier_env *env, int insn_idx, int off,
 		 */
 		*reg_type = info.reg_type;
 
+		if (*reg_type == PTR_TO_MEM) {
+			env->insn_aux_data[insn_idx].mem_size = info.mem_size;
+		}
 		if (*reg_type == PTR_TO_BTF_ID || *reg_type == PTR_TO_BTF_ID_OR_NULL) {
 			*btf = info.btf;
 			*btf_id = info.btf_id;
@@ -3474,7 +3477,6 @@ int check_ctx_reg(struct bpf_verifier_env *env,
 	/* Access to ctx or passing it to a helper is only allowed in
 	 * its original, unmodified form.
 	 */
-
 	if (reg->off) {
 		verbose(env, "dereference of modified ctx ptr R%d off=%d disallowed\n",
 			regno, reg->off);
@@ -3905,9 +3907,14 @@ static int check_mem_access(struct bpf_verifier_env *env, int insn_idx, u32 regn
 			/* ctx access returns either a scalar, or a
 			 * PTR_TO_PACKET[_META,_END]. In the latter
 			 * case, we know the offset is zero.
+			 *
+			 * XRP: allow ctx access to return PTR_TO_MEM
 			 */
 			if (reg_type == SCALAR_VALUE) {
 				mark_reg_unknown(env, regs, value_regno);
+			} else if (reg_type == PTR_TO_MEM) {
+				mark_reg_known_zero(env, regs, value_regno);
+				regs[value_regno].mem_size = env->insn_aux_data[insn_idx].mem_size;
 			} else {
 				mark_reg_known_zero(env, regs,
 						    value_regno);

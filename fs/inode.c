@@ -249,6 +249,9 @@ static struct inode *alloc_inode(struct super_block *sb)
 		return NULL;
 	}
 
+	inode->xrp_extent_root = NULL;
+	spin_lock_init(&inode->xrp_extent_lock);
+
 	return inode;
 }
 
@@ -1677,6 +1680,7 @@ retry:
 			mark_inode_dirty_sync(inode);
 			goto retry;
 		}
+		xrp_clear_tree(inode);
 		iput_final(inode);
 	}
 }

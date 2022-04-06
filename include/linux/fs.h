@@ -321,6 +321,9 @@ enum rw_hint {
 
 struct kiocb {
 	struct file		*ki_filp;
+	bool			xrp_enabled;
+	char __user		*xrp_scratch_buf;
+	unsigned int		xrp_bpf_fd;
 
 	/* The 'ki_filp' pointer is shared in a union for aio */
 	randomized_struct_fields_start
@@ -610,6 +613,9 @@ struct fsnotify_mark_connector;
  * of the 'struct inode'
  */
 struct inode {
+	struct rb_root __rcu	*xrp_extent_root;
+	spinlock_t		xrp_extent_lock;
+
 	umode_t			i_mode;
 	unsigned short		i_opflags;
 	kuid_t			i_uid;
@@ -720,6 +726,37 @@ struct inode {
 
 	void			*i_private; /* fs or device private pointer */
 } __randomize_layout;
+
+#define XRP_MAX_LEN	0xffffffff
+#define XRP_BLOCK_SHIFT	12
+#define XRP_BLOCK_SIZE	(1 << XRP_BLOCK_SHIFT)
+
+struct xrp_root {
+	struct rb_root rb_root;
+	__u64 version;
+	struct rcu_head rcu_head;
+};
+
+struct xrp_extent {
+	struct rb_node rb_node;
+	__u32 lblk;
+	__u32 len;
+	__u64 pblk;
+	__u64 version;
+};
+
+struct xrp_mapping {
+	bool exist;
+	loff_t offset;  /* file offset */
+	__u64 len;
+	__u64 address;  /* disk address */
+	__u64 version;
+};
+
+void xrp_sync_ext4_extent(struct inode *inode, bool lock_inode);
+void xrp_print_tree(struct inode *inode);
+void xrp_clear_tree(struct inode *inode);
+void xrp_retrieve_mapping(struct inode *inode, loff_t offset, loff_t len, struct xrp_mapping *mapping);
 
 struct timespec64 timestamp_truncate(struct timespec64 t, struct inode *inode);
 

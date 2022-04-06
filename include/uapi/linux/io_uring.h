@@ -58,6 +58,8 @@ struct io_uring_sqe {
 			/* personality to use, if used */
 			__u16	personality;
 			__s32	splice_fd_in;
+			__s32	bpf_fd;		/* for IORING_OP_READ_XRP */
+			__u64	scratch;	/* for IORING_OP_READ_XRP */
 		};
 		__u64	__pad2[3];
 	};
@@ -137,6 +139,7 @@ enum {
 	IORING_OP_SHUTDOWN,
 	IORING_OP_RENAMEAT,
 	IORING_OP_UNLINKAT,
+	IORING_OP_READ_XRP,
 
 	/* this goes last, obviously */
 	IORING_OP_LAST,

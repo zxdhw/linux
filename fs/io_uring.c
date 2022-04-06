@@ -868,6 +868,15 @@ static const struct io_op_def io_op_defs[] = {
 		.plug			= 1,
 		.async_size		= sizeof(struct io_async_rw),
 	},
+	[IORING_OP_READ_XRP] = {
+		.needs_file		= 1,
+		.unbound_nonreg_file	= 1,
+		.pollin			= 1,
+		.buffer_select		= 1,
+		.needs_async_data	= 1,
+		.plug			= 1,
+		.async_size		= sizeof(struct io_async_rw),
+	},
 	[IORING_OP_WRITEV] = {
 		.needs_file		= 1,
 		.hash_reg_file		= 1,
@@ -2441,6 +2450,7 @@ static bool io_resubmit_prep(struct io_kiocb *req)
 	case IORING_OP_READV:
 	case IORING_OP_READ_FIXED:
 	case IORING_OP_READ:
+	case IORING_OP_READ_XRP:
 		rw = READ;
 		break;
 	case IORING_OP_WRITEV:
@@ -2728,6 +2738,11 @@ static int io_prep_rw(struct io_kiocb *req, const struct io_uring_sqe *sqe)
 		if (kiocb->ki_flags & IOCB_HIPRI)
 			return -EINVAL;
 		kiocb->ki_complete = io_complete_rw;
+	}
+	if (sqe->opcode == IORING_OP_READ_XRP) {
+		kiocb->xrp_enabled = true;
+		kiocb->xrp_scratch_buf = (char __user *) sqe->scratch;
+		kiocb->xrp_bpf_fd = (unsigned int) sqe->bpf_fd;
 	}
 
 	req->rw.addr = READ_ONCE(sqe->addr);
@@ -5819,6 +5834,7 @@ static int io_req_prep(struct io_kiocb *req, const struct io_uring_sqe *sqe)
 	case IORING_OP_READV:
 	case IORING_OP_READ_FIXED:
 	case IORING_OP_READ:
+	case IORING_OP_READ_XRP:
 		return io_read_prep(req, sqe);
 	case IORING_OP_WRITEV:
 	case IORING_OP_WRITE_FIXED:
@@ -5895,6 +5911,7 @@ static int io_req_prep_async(struct io_kiocb *req)
 	case IORING_OP_READV:
 	case IORING_OP_READ_FIXED:
 	case IORING_OP_READ:
+	case IORING_OP_READ_XRP:
 		return io_rw_prep_async(req, READ);
 	case IORING_OP_WRITEV:
 	case IORING_OP_WRITE_FIXED:
@@ -5985,6 +6002,7 @@ static void __io_clean_op(struct io_kiocb *req)
 		case IORING_OP_READV:
 		case IORING_OP_READ_FIXED:
 		case IORING_OP_READ:
+		case IORING_OP_READ_XRP:
 			kfree((void *)(unsigned long)req->rw.addr);
 			break;
 		case IORING_OP_RECVMSG:
@@ -6000,6 +6018,7 @@ static void __io_clean_op(struct io_kiocb *req)
 		case IORING_OP_READV:
 		case IORING_OP_READ_FIXED:
 		case IORING_OP_READ:
+		case IORING_OP_READ_XRP:
 		case IORING_OP_WRITEV:
 		case IORING_OP_WRITE_FIXED:
 		case IORING_OP_WRITE: {
@@ -6053,6 +6072,7 @@ static int io_issue_sqe(struct io_kiocb *req, unsigned int issue_flags)
 	case IORING_OP_READV:
 	case IORING_OP_READ_FIXED:
 	case IORING_OP_READ:
+	case IORING_OP_READ_XRP:
 		ret = io_read(req, issue_flags);
 		break;
 	case IORING_OP_WRITEV:

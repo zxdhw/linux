@@ -920,4 +920,5 @@ const struct inode_operations ext4_file_inode_operations = {
 	.set_acl	= ext4_set_acl,
 	.fiemap		= ext4_fiemap,
 };
+EXPORT_SYMBOL(ext4_file_inode_operations);
 

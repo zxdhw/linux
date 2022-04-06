@@ -427,6 +427,7 @@ struct bpf_insn_access_aux {
 			u32 btf_id;
 		};
 	};
+	int mem_size; /* for PTR_TO_MEM */
 	struct bpf_verifier_log *log; /* for verbose logs */
 };
 

@@ -69,6 +69,7 @@ struct io_uring_params;
 struct clone_args;
 struct open_how;
 struct mount_attr;
+struct xrp_stats;
 
 #include <linux/types.h>
 #include <linux/aio_abi.h>
@@ -506,6 +507,8 @@ asmlinkage long sys_writev(unsigned long fd,
 			   unsigned long vlen);
 asmlinkage long sys_pread64(unsigned int fd, char __user *buf,
 			    size_t count, loff_t pos);
+asmlinkage long sys_read_xrp(unsigned int fd, char __user *buf,
+			     size_t count, loff_t pos, unsigned int bpf_fd, char __user *scratch_buf);
 asmlinkage long sys_pwrite64(unsigned int fd, const char __user *buf,
 			     size_t count, loff_t pos);
 asmlinkage long sys_preadv(unsigned long fd, const struct iovec __user *vec,
@@ -1363,6 +1366,9 @@ long ksys_old_shmctl(int shmid, int cmd, struct shmid_ds __user *buf);
 long compat_ksys_semtimedop(int semid, struct sembuf __user *tsems,
 			    unsigned int nsops,
 			    const struct old_timespec32 __user *timeout);
+
+asmlinkage long sys_print_xrp_stats(struct xrp_stats __user *buf);
+asmlinkage long sys_test_xrp(char __user *data_buf, char __user *scratch_buf, unsigned int bpf_fd);
 
 int __sys_getsockopt(int fd, int level, int optname, char __user *optval,
 		int __user *optlen);

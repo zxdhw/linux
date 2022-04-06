@@ -19,6 +19,8 @@
 #include <linux/falloc.h>
 #include <linux/sched/signal.h>
 #include <linux/fiemap.h>
+#include <linux/bpf.h>
+#include <linux/filter.h>
 
 #include "internal.h"
 
@@ -756,6 +758,235 @@ out:
 	fdput(f);
 	return error;
 }
+
+extern const struct inode_operations ext4_file_inode_operations;
+
+atomic_long_t xrp_ebpf_time;
+EXPORT_SYMBOL(xrp_ebpf_time);
+atomic_long_t xrp_ebpf_count;
+EXPORT_SYMBOL(xrp_ebpf_count);
+
+atomic_long_t xrp_resubmit_leaf_time;
+EXPORT_SYMBOL(xrp_resubmit_leaf_time);
+atomic_long_t xrp_resubmit_leaf_count;
+EXPORT_SYMBOL(xrp_resubmit_leaf_count);
+
+atomic_long_t xrp_resubmit_int_time;
+EXPORT_SYMBOL(xrp_resubmit_int_time);
+atomic_long_t xrp_resubmit_int_count;
+EXPORT_SYMBOL(xrp_resubmit_int_count);
+
+atomic_long_t xrp_resubmit_level_nr;
+EXPORT_SYMBOL(xrp_resubmit_level_nr);
+atomic_long_t xrp_resubmit_level_count;
+EXPORT_SYMBOL(xrp_resubmit_level_count);
+
+atomic_long_t xrp_extent_lookup_time;
+EXPORT_SYMBOL(xrp_extent_lookup_time);
+atomic_long_t xrp_extent_lookup_count;
+EXPORT_SYMBOL(xrp_extent_lookup_count);
+
+SYSCALL_DEFINE3(test_xrp, char __user *, data_buf, char __user *, scratch_buf, unsigned int, bpf_fd)
+{
+	struct page *data_page, *scratch_page;
+	struct bpf_prog *ebpf_prog;
+	struct bpf_xrp_kern ebpf_context;
+	u32 ebpf_return;
+	ktime_t ebpf_start;
+	int ret = 0;
+
+	if ((((uint64_t) data_buf) & (PAGE_SIZE - 1)) != 0) {
+		printk("test_xrp: data buffer is not 4KB aligned\n");
+		ret = -EINVAL;
+		goto out;
+	}
+	if ((((uint64_t) scratch_buf) & (PAGE_SIZE - 1)) != 0) {
+		printk("test_xrp: scratch buffer is not 4KB aligned\n");
+		ret = -EINVAL;
+		goto out;
+	}
+
+	if (get_user_pages_fast(data_buf, 1, FOLL_WRITE, &data_page) != 1) {
+		printk("test_xrp: failed to pin data page\n");
+		ret = -EINVAL;
+		goto out;
+	}
+	if (get_user_pages_fast(scratch_buf, 1, FOLL_WRITE, &scratch_page) != 1){
+		ret = -EINVAL;
+		printk("test_xrp: failed to pin scratch page\n");
+		goto free_data;
+	}
+	ebpf_prog = bpf_prog_get_type(bpf_fd, BPF_PROG_TYPE_XRP);
+	if (IS_ERR(ebpf_prog)) {
+		ret = -EINVAL;
+		printk("test_xrp: failed to get bpf prog\n");
+		goto free_scratch;
+	}
+
+	memset(&ebpf_context, 0, sizeof(struct bpf_xrp_kern));
+	ebpf_context.data = page_address(data_page);
+	ebpf_context.scratch = page_address(scratch_page);
+	ebpf_start = ktime_get();
+	ebpf_return = BPF_PROG_RUN(ebpf_prog, &ebpf_context);
+	if (ebpf_return == EINVAL) {
+		printk("test_xrp: ebpf search failed\n");
+	} else if (ebpf_return != 0) {
+		printk("test_xrp: ebpf search unknown error %d\n", ebpf_return);
+	}
+	atomic_long_add(ktime_sub(ktime_get(), ebpf_start), &xrp_ebpf_time);
+	atomic_long_inc(&xrp_ebpf_count);
+
+	if (ebpf_return != 0) {
+		printk("test_xrp: bpf error, dump data page:\n");
+		ebpf_dump_page(page_address(data_page), PAGE_SIZE);
+		printk("test_xrp: bpf error, dump scratch page:\n");
+		ebpf_dump_page(page_address(scratch_page), PAGE_SIZE);
+	}
+
+	bpf_prog_put(ebpf_prog);
+free_scratch:
+	put_page(scratch_page);
+free_data:
+	put_page(data_page);
+out:
+	return ret;
+}
+
+SYSCALL_DEFINE1(print_xrp_stats, struct xrp_stats __user *, buf)
+{
+	long _xrp_ebpf_time = atomic_long_xchg(&xrp_ebpf_time, 0);
+	long _xrp_ebpf_count = atomic_long_xchg(&xrp_ebpf_count, 0);
+	long _xrp_resubmit_int_time = atomic_long_xchg(&xrp_resubmit_int_time, 0);
+	long _xrp_resubmit_int_count = atomic_long_xchg(&xrp_resubmit_int_count, 0);
+	long _xrp_resubmit_leaf_time = atomic_long_xchg(&xrp_resubmit_leaf_time, 0);
+	long _xrp_resubmit_leaf_count = atomic_long_xchg(&xrp_resubmit_leaf_count, 0);
+	long _xrp_resubmit_level_nr = atomic_long_xchg(&xrp_resubmit_level_nr, 0);
+	long _xrp_resubmit_level_count = atomic_long_xchg(&xrp_resubmit_level_count, 0);
+	long _xrp_extent_lookup_time = atomic_long_xchg(&xrp_extent_lookup_time, 0);
+	long _xrp_extent_lookup_count = atomic_long_xchg(&xrp_extent_lookup_count, 0);
+
+	struct xrp_stats stats = {
+		_xrp_ebpf_time,
+		_xrp_ebpf_count,
+		_xrp_resubmit_int_time,
+		_xrp_resubmit_int_count,
+		_xrp_resubmit_leaf_time,
+		_xrp_resubmit_leaf_count,
+		_xrp_resubmit_level_nr,
+		_xrp_resubmit_level_count,
+		_xrp_extent_lookup_time,
+		_xrp_extent_lookup_count,
+	};
+
+	printk("xrp_ebpf_time: %ld\n", _xrp_ebpf_time);
+	printk("xrp_ebpf_count: %ld\n", _xrp_ebpf_count);
+	printk("xrp_resubmit_int_time: %ld\n", _xrp_resubmit_int_time);
+	printk("xrp_resubmit_int_count: %ld\n", _xrp_resubmit_int_count);
+	printk("xrp_resubmit_leaf_time: %ld\n", _xrp_resubmit_leaf_time);
+	printk("xrp_resubmit_leaf_count: %ld\n", _xrp_resubmit_leaf_count);
+	printk("xrp_resubmit_level_nr: %ld\n", _xrp_resubmit_level_nr);
+	printk("xrp_resubmit_level_count: %ld\n", _xrp_resubmit_level_count);
+	printk("xrp_extent_lookup_time: %ld\n", _xrp_extent_lookup_time);
+	printk("xrp_extent_lookup_count: %ld\n", _xrp_extent_lookup_count);
+
+	if (buf != NULL && copy_to_user(buf, &stats, sizeof(struct xrp_stats)))
+		return -EFAULT;
+
+	return 0;
+}
+
+int xrp_bpf_prog_attach(const union bpf_attr *attr, struct bpf_prog *prog)
+{
+	return 0;
+}
+
+int xrp_bpf_prog_detach(const union bpf_attr *attr)
+{
+	return 0;
+}
+
+const struct bpf_prog_ops xrp_prog_ops = {};
+
+static const struct bpf_func_proto *
+xrp_func_proto(enum bpf_func_id func_id, const struct bpf_prog *prog)
+{
+	return bpf_base_func_proto(func_id);
+}
+
+static bool xrp_is_valid_access(int off, int size, enum bpf_access_type type, const struct bpf_prog *prog, struct bpf_insn_access_aux *info){
+	int size_of_field;
+
+	if (off < 0 || size < 0 || off + size > sizeof(struct bpf_xrp))
+		return false;
+
+	switch (off) {
+	case bpf_ctx_range(struct bpf_xrp, done):
+		size_of_field = sizeof_field(struct bpf_xrp, done);
+		if (!bpf_ctx_narrow_access_ok(off, size, size_of_field))
+			return false;
+		break;
+	case bpf_ctx_range(struct bpf_xrp, next_addr):
+		size_of_field = sizeof_field(struct bpf_xrp, next_addr);
+		if (!bpf_ctx_narrow_access_ok(off, size, size_of_field))
+			return false;
+		break;
+	case bpf_ctx_range(struct bpf_xrp, size):
+		size_of_field = sizeof_field(struct bpf_xrp, size);
+		if (!bpf_ctx_narrow_access_ok(off, size, size_of_field))
+			return false;
+		break;
+	case bpf_ctx_range(struct bpf_xrp, data):
+		size_of_field = sizeof_field(struct bpf_xrp, data);
+		if (type != BPF_READ || size != size_of_field || off != offsetof(struct bpf_xrp, data))
+			return false;
+		info->reg_type = PTR_TO_MEM;
+		info->mem_size = PAGE_SIZE;
+		break;
+	case bpf_ctx_range(struct bpf_xrp, scratch):
+		size_of_field = sizeof_field(struct bpf_xrp, scratch);
+		if (type != BPF_READ || size != size_of_field || off != offsetof(struct bpf_xrp, scratch))
+			return false;
+		info->reg_type = PTR_TO_MEM;
+		info->mem_size = PAGE_SIZE;
+		break;
+	default:
+		return false;
+	}
+	return true;
+}
+
+const struct bpf_verifier_ops xrp_verifier_ops = {
+	.get_func_proto = xrp_func_proto,
+	.is_valid_access = xrp_is_valid_access,
+};
+
+void ebpf_dump_page(uint8_t *page_image, uint64_t size) {
+	int row, column, addr;
+	uint64_t page_offset = 0;
+	printk("=============================EBPF PAGE DUMP START=============================\n");
+	for (row = 0; row < size / 16; ++row) {
+		printk(KERN_CONT "%08llx  ", page_offset + 16 * row);
+		for (column = 0; column < 16; ++column) {
+			addr = 16 * row + column;
+			printk(KERN_CONT "%02x ", page_image[addr]);
+			if (column == 7 || column == 15) {
+				printk(KERN_CONT " ");
+			}
+		}
+		printk(KERN_CONT "|");
+		for (column = 0; column < 16; ++column) {
+			addr = 16 * row + column;
+			if (page_image[addr] >= '!' && page_image[addr] <= '~') {
+				printk(KERN_CONT "%c", page_image[addr]);
+			} else {
+				printk(KERN_CONT ".");
+			}
+		}
+		printk(KERN_CONT "|\n");
+	}
+	printk("==============================EBPF PAGE DUMP END==============================\n");
+}
+EXPORT_SYMBOL(ebpf_dump_page);
 
 #ifdef CONFIG_COMPAT
 /**

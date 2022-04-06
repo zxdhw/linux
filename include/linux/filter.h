@@ -1472,4 +1472,31 @@ static inline bool bpf_sk_lookup_run_v6(struct net *net, int protocol,
 }
 #endif /* IS_ENABLED(CONFIG_IPV6) */
 
+struct bpf_xrp_kern {
+	int32_t done;
+	uint64_t next_addr[16];
+	uint64_t size[16];
+	char *data;
+	char *scratch;
+};
+
+struct xrp_stats {
+	long xrp_ebpf_time;
+	long xrp_ebpf_count;
+
+	long xrp_resubmit_leaf_time;
+	long xrp_resubmit_leaf_count;
+
+	long xrp_resubmit_int_time;
+	long xrp_resubmit_int_count;
+
+	long xrp_resubmit_level_nr;
+	long xrp_resubmit_level_count;
+
+	long xrp_extent_lookup_time;
+	long xrp_extent_lookup_count;
+};
+
+void ebpf_dump_page(uint8_t *page_image, uint64_t size);
+
 #endif /* __LINUX_FILTER_H__ */

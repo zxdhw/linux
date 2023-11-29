@@ -21,7 +21,6 @@
 #include <linux/fiemap.h>
 
 #include "internal.h"
-
 #include <asm/ioctls.h>
 
 /* So that the fiemap access checks can't overflow on 32 bit machines. */
@@ -756,6 +755,451 @@ out:
 	fdput(f);
 	return error;
 }
+
+atomic_long_t ktime_time;
+EXPORT_SYMBOL(ktime_time);
+atomic_long_t ktime_count;
+EXPORT_SYMBOL(ktime_count);
+
+atomic_long_t test_time;
+EXPORT_SYMBOL(test_time);
+atomic_long_t test_count;
+EXPORT_SYMBOL(test_count);
+
+//aio stat
+atomic_long_t io_time_kernel;
+atomic_long_t io_count_kernel;
+EXPORT_SYMBOL(io_time_kernel);
+EXPORT_SYMBOL(io_count_kernel);
+
+atomic_long_t aio_time;
+atomic_long_t aio_count;
+EXPORT_SYMBOL(aio_time);
+EXPORT_SYMBOL(aio_count);
+
+atomic_long_t aio_hit_time;
+atomic_long_t aio_hit_count;
+EXPORT_SYMBOL(aio_hit_time);
+EXPORT_SYMBOL(aio_hit_count);
+
+atomic_long_t get_user_time;
+atomic_long_t get_user_count;
+EXPORT_SYMBOL(get_user_time);
+EXPORT_SYMBOL(get_user_count);
+
+atomic_long_t copy_user_time;
+atomic_long_t copy_user_count;
+EXPORT_SYMBOL(copy_user_time);
+EXPORT_SYMBOL(copy_user_count);
+
+atomic_long_t aio_req_time;
+atomic_long_t aio_req_count;
+EXPORT_SYMBOL(aio_req_time);
+EXPORT_SYMBOL(aio_req_count);
+
+atomic_long_t aio_fget_time;
+atomic_long_t aio_fget_count;
+EXPORT_SYMBOL(aio_fget_time);
+EXPORT_SYMBOL(aio_fget_count);
+
+atomic_long_t aio_prep_time;
+atomic_long_t aio_prep_count;
+EXPORT_SYMBOL(aio_prep_time);
+EXPORT_SYMBOL(aio_prep_count);
+
+atomic_long_t aio_setup_time;
+atomic_long_t aio_setup_count;
+EXPORT_SYMBOL(aio_setup_time);
+EXPORT_SYMBOL(aio_setup_count);
+
+atomic_long_t verify_time;
+atomic_long_t verify_count;
+EXPORT_SYMBOL(verify_time);
+EXPORT_SYMBOL(verify_count);
+
+atomic_long_t read_iter_time;
+atomic_long_t read_iter_count;
+EXPORT_SYMBOL(read_iter_time);
+EXPORT_SYMBOL(read_iter_count);
+
+//fs stat
+ktime_t fs_start;
+atomic_long_t fs_time;
+atomic_long_t fs_count;
+EXPORT_SYMBOL(fs_start);
+EXPORT_SYMBOL(fs_time);
+EXPORT_SYMBOL(fs_count);
+
+atomic_long_t file_read_iter_time;
+atomic_long_t file_read_iter_count;
+EXPORT_SYMBOL(file_read_iter_time);
+EXPORT_SYMBOL(file_read_iter_count);
+
+atomic_long_t get_page_time;
+atomic_long_t get_page_count;
+EXPORT_SYMBOL(get_page_time);
+EXPORT_SYMBOL(get_page_count);
+
+atomic_long_t dio_time;
+atomic_long_t dio_count;
+EXPORT_SYMBOL(dio_time);
+EXPORT_SYMBOL(dio_count);
+
+atomic_long_t filemap_wait_time;
+atomic_long_t filemap_wait_count;
+EXPORT_SYMBOL(filemap_wait_time);
+EXPORT_SYMBOL(filemap_wait_count);
+
+atomic_long_t iomap_time;
+atomic_long_t iomap_count;
+EXPORT_SYMBOL(iomap_time);
+EXPORT_SYMBOL(iomap_count);
+
+atomic_long_t iomap_hit_time;
+atomic_long_t iomap_hit_count;
+EXPORT_SYMBOL(iomap_hit_time);
+EXPORT_SYMBOL(iomap_hit_count);
+
+atomic_long_t bio_time;
+atomic_long_t bio_count;
+EXPORT_SYMBOL(bio_time);
+EXPORT_SYMBOL(bio_count);
+
+atomic_long_t fs_submit_time;
+atomic_long_t fs_submit_count;
+EXPORT_SYMBOL(fs_submit_time);
+EXPORT_SYMBOL(fs_submit_count);
+
+
+atomic_long_t plug_time;
+atomic_long_t plug_count;
+EXPORT_SYMBOL(plug_time);
+EXPORT_SYMBOL(plug_count);
+
+// block stat
+atomic_long_t block_time;
+atomic_long_t block_count;
+atomic_long_t block_start;
+EXPORT_SYMBOL(block_time);
+EXPORT_SYMBOL(block_count);
+EXPORT_SYMBOL(block_start);
+
+atomic_long_t submit_bio_time;
+atomic_long_t submit_bio_count;
+EXPORT_SYMBOL(submit_bio_time);
+EXPORT_SYMBOL(submit_bio_count);
+
+atomic_long_t hit_tag_time;
+atomic_long_t hit_tag_count;
+EXPORT_SYMBOL(hit_tag_time);
+EXPORT_SYMBOL(hit_tag_count);
+
+atomic_long_t hit_buf_time;
+atomic_long_t hit_buf_count;
+EXPORT_SYMBOL(hit_buf_time);
+EXPORT_SYMBOL(hit_buf_count);
+
+atomic_long_t req_time;
+atomic_long_t req_count;
+EXPORT_SYMBOL(req_time);
+EXPORT_SYMBOL(req_count);
+
+//driver stat
+atomic_long_t driver_time;
+atomic_long_t driver_count;
+EXPORT_SYMBOL(driver_time);
+EXPORT_SYMBOL(driver_count);
+
+atomic_long_t queue_rq_time;
+atomic_long_t queue_rq_count;
+EXPORT_SYMBOL(queue_rq_time);
+EXPORT_SYMBOL(queue_rq_count);
+
+
+atomic_long_t dma_time;
+atomic_long_t dma_count;
+EXPORT_SYMBOL(dma_time);
+EXPORT_SYMBOL(dma_count);
+
+atomic_long_t hit_cmd_time;
+atomic_long_t hit_cmd_count;
+EXPORT_SYMBOL(hit_cmd_time);
+EXPORT_SYMBOL(hit_cmd_count);
+
+atomic_long_t sq_time;
+atomic_long_t sq_count;
+EXPORT_SYMBOL(sq_time);
+EXPORT_SYMBOL(sq_count);
+
+atomic_long_t cmd_time;
+atomic_long_t cmd_count;
+EXPORT_SYMBOL(cmd_time);
+EXPORT_SYMBOL(cmd_count);
+
+atomic_long_t dma_unmap_time;
+atomic_long_t dma_unmap_count;
+EXPORT_SYMBOL(dma_unmap_time);
+EXPORT_SYMBOL(dma_unmap_count);
+
+atomic_long_t interrupt_time;
+atomic_long_t interrupt_count;
+EXPORT_SYMBOL(interrupt_time);
+EXPORT_SYMBOL(interrupt_count);
+
+SYSCALL_DEFINE1(print_hit_stats, struct hit_stats __user *, buf)
+{
+	long _ktime_time= atomic_long_xchg(&ktime_time, 0);
+	long _ktime_count= atomic_long_xchg(&ktime_count, 0);
+	//aio time
+	long _io_time_kernel= atomic_long_xchg(&io_time_kernel, 0);
+	long _io_count_kernel = atomic_long_xchg(&io_count_kernel, 0);
+	
+	long _aio_time= atomic_long_xchg(&aio_time, 0);
+	long _aio_count = atomic_long_xchg(&aio_count, 0);
+	
+	long _aio_hit_time= atomic_long_xchg(&aio_hit_time, 0);
+	long _aio_hit_count = atomic_long_xchg(&aio_hit_count, 0);
+	
+	long _get_user_time= atomic_long_xchg(&get_user_time, 0);
+	long _get_user_count = atomic_long_xchg(&get_user_count, 0);
+	
+	long _copy_user_time= atomic_long_xchg(&copy_user_time, 0);
+	long _copy_user_count = atomic_long_xchg(&copy_user_count, 0);
+	
+	long _aio_req_time= atomic_long_xchg(&aio_req_time, 0);
+	long _aio_req_count = atomic_long_xchg(&aio_req_count, 0);
+	
+	long _aio_fget_time= atomic_long_xchg(&aio_fget_time, 0);
+	long _aio_fget_count = atomic_long_xchg(&aio_fget_count, 0);
+	
+	long _aio_prep_time= atomic_long_xchg(&aio_prep_time, 0);
+	long _aio_prep_count = atomic_long_xchg(&aio_prep_count, 0);
+	
+	long _aio_setup_time= atomic_long_xchg(&aio_setup_time, 0);
+	long _aio_setup_count = atomic_long_xchg(&aio_setup_count, 0);
+	
+	long _verify_time= atomic_long_xchg(&verify_time, 0);
+	long _verify_count = atomic_long_xchg(&verify_count, 0);
+	
+	long _read_iter_time= atomic_long_xchg(&read_iter_time, 0);
+	long _read_iter_count = atomic_long_xchg(&read_iter_count, 0);
+	
+	//fs stat
+	long _file_read_iter_time = atomic_long_xchg(&file_read_iter_time, 0);
+	long _file_read_iter_count = atomic_long_xchg(&file_read_iter_count, 0);
+	
+	long _dio_time = atomic_long_xchg(&dio_time, 0);
+	long _dio_count= atomic_long_xchg(&dio_count, 0);
+
+	long _filemap_wait_time = atomic_long_xchg(&filemap_wait_time, 0);
+	long _filemap_wait_count= atomic_long_xchg(&filemap_wait_count, 0);
+	
+	long _iomap_time = atomic_long_xchg(&iomap_time, 0);
+	long _iomap_count= atomic_long_xchg(&iomap_count, 0);
+	
+	long _iomap_hit_time = atomic_long_xchg(&iomap_hit_time, 0);
+	long _iomap_hit_count= atomic_long_xchg(&iomap_hit_count, 0);
+	
+	long _get_page_time= atomic_long_xchg(&get_page_time, 0);
+	long _get_page_count = atomic_long_xchg(&get_page_count, 0);
+	
+	long _bio_time = atomic_long_xchg(&bio_time, 0);
+	long _bio_count= atomic_long_xchg(&bio_count, 0);
+	
+	long _hit_buf_time = atomic_long_xchg(&hit_buf_time, 0);
+	long _hit_buf_count= atomic_long_xchg(&hit_buf_count, 0);
+
+	long _fs_time = atomic_long_xchg(&fs_time, 0);
+	long _fs_count = atomic_long_xchg(&fs_count, 0);
+	
+	long _fs_submit_time = atomic_long_xchg(&fs_submit_time, 0);
+	long _fs_submit_count= atomic_long_xchg(&fs_submit_count, 0);
+
+	long _plug_time = atomic_long_xchg(&plug_time, 0);
+	long _plug_count = atomic_long_xchg(&plug_count, 0);
+	
+	//block
+	long _submit_bio_time = atomic_long_xchg(&submit_bio_time, 0);
+	long _submit_bio_count = atomic_long_xchg(&submit_bio_count, 0);
+	
+	long _block_time = atomic_long_xchg(&block_time, 0);
+	long _block_count = atomic_long_xchg(&block_count, 0);
+	
+	long _req_time = atomic_long_xchg(&req_time, 0);
+	long _req_count= atomic_long_xchg(&req_count, 0);
+	
+	long _hit_tag_time = atomic_long_xchg(&hit_tag_time, 0);
+	long _hit_tag_count= atomic_long_xchg(&hit_tag_count, 0);
+
+	// driver 
+	long _driver_time = atomic_long_xchg(&driver_time, 0);
+	long _driver_count = atomic_long_xchg(&driver_count, 0);
+	
+	long _queue_rq_time = atomic_long_xchg(&queue_rq_time, 0);
+	long _queue_rq_count = atomic_long_xchg(&queue_rq_count, 0);
+
+	long _dma_time = atomic_long_xchg(&dma_time, 0);
+	long _dma_count= atomic_long_xchg(&dma_count, 0);
+
+	long _hit_cmd_time = atomic_long_xchg(&hit_cmd_time, 0);
+	long _hit_cmd_count= atomic_long_xchg(&hit_cmd_count, 0);
+
+	long _sq_time = atomic_long_xchg(&sq_time, 0);
+	long _sq_count= atomic_long_xchg(&sq_count, 0);
+
+	long _cmd_time = atomic_long_xchg(&cmd_time, 0);
+	long _cmd_count= atomic_long_xchg(&cmd_count, 0);
+
+	long _dma_unmap_time = atomic_long_xchg(&dma_unmap_time, 0);
+	long _dma_unmap_count= atomic_long_xchg(&dma_unmap_count, 0);
+
+	long _interrupt_time = atomic_long_xchg(&interrupt_time, 0);
+	long _interrupt_count= atomic_long_xchg(&interrupt_count, 0);
+
+	struct hit_stats stats = {
+		_ktime_time,
+		_ktime_count,
+
+		_io_time_kernel,
+		_io_count_kernel,
+
+		_aio_time,
+		_aio_count,
+
+		_aio_hit_time,
+		_aio_hit_count,
+
+		_get_user_time,
+		_get_user_count,
+
+		_copy_user_time,
+		_copy_user_count,
+
+		_aio_req_time,
+		_aio_req_count,
+
+		_aio_fget_time,
+		_aio_fget_count,
+
+		_aio_prep_time,
+		_aio_prep_count,
+
+		_aio_setup_time,
+		_aio_setup_count,
+
+		_verify_time,
+		_verify_count,
+
+		_read_iter_time,
+		_read_iter_count,
+
+		//fs stat
+		_file_read_iter_time,
+		_file_read_iter_count,
+
+		_fs_time,
+		_fs_count,
+
+		_dio_time,
+		_dio_count,
+
+		_filemap_wait_time,
+		_filemap_wait_count,
+
+		_iomap_time,
+		_iomap_count,
+
+		_iomap_hit_time,
+		_iomap_hit_count,
+
+		_get_page_time,
+		_get_page_count,
+
+		_bio_time,
+		_bio_count,
+
+		_hit_buf_time,
+		_hit_buf_count,
+
+		_plug_time,
+		_plug_count,
+
+		_fs_submit_time,
+		_fs_submit_count,
+
+		//block 
+		_block_time,
+		_block_count,
+
+		_submit_bio_time,
+		_submit_bio_count,
+
+		_hit_tag_time,
+		_hit_tag_count,
+		
+		_req_time,
+		_req_count,
+
+		//driver
+		_driver_time,
+		_driver_count,
+
+		_queue_rq_time,
+		_queue_rq_count,
+
+		_dma_time,
+		_dma_count,
+
+		_hit_cmd_time,
+		_hit_cmd_count,
+
+		_sq_time,
+		_sq_count,
+
+		_cmd_time,
+		_cmd_count,
+
+		_dma_unmap_time,
+		_dma_unmap_count,
+		
+		_interrupt_time,
+		_interrupt_count,
+
+	};
+
+	if (buf != NULL && copy_to_user(buf, &stats, sizeof(struct hit_stats)))
+		return -EFAULT;
+
+	return 0;
+}
+
+void hit_dump_page(uint8_t *page_image, uint64_t size) {
+	int row, column, addr;
+	uint64_t page_offset = 0;
+	printk("=============================EBPF PAGE DUMP START=============================\n");
+	for (row = 0; row < size / 16; ++row) {
+		printk(KERN_CONT "%08llx  ", page_offset + 16 * row);
+		for (column = 0; column < 16; ++column) {
+			addr = 16 * row + column;
+			printk(KERN_CONT "%02x ", page_image[addr]);
+			if (column == 7 || column == 15) {
+				printk(KERN_CONT " ");
+			}
+		}
+		printk(KERN_CONT "|");
+		for (column = 0; column < 16; ++column) {
+			addr = 16 * row + column;
+			if (page_image[addr] >= '!' && page_image[addr] <= '~') {
+				printk(KERN_CONT "%c", page_image[addr]);
+			} else {
+				printk(KERN_CONT ".");
+			}
+		}
+		printk(KERN_CONT "|\n");
+	}
+	printk("==============================EBPF PAGE DUMP END==============================\n");
+}
+EXPORT_SYMBOL(hit_dump_page);
 
 #ifdef CONFIG_COMPAT
 /**

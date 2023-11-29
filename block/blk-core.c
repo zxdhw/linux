@@ -12,6 +12,8 @@
 /*
  * This handles all read/write requests to block devices
  */
+#include "linux/ktime.h"
+#include "linux/timekeeping.h"
 #include <linux/kernel.h>
 #include <linux/module.h>
 #include <linux/backing-dev.h>
@@ -62,6 +64,11 @@ EXPORT_TRACEPOINT_SYMBOL_GPL(block_unplug);
 EXPORT_TRACEPOINT_SYMBOL_GPL(block_rq_insert);
 
 DEFINE_IDA(blk_queue_ida);
+
+extern atomic_long_t submit_bio_time;
+extern atomic_long_t submit_bio_count;
+extern ktime_t block_start;
+extern atomic_long_t plug_time;
 
 /*
  * For queue allocation
@@ -809,7 +816,7 @@ static noinline_for_stack bool submit_bio_checks(struct bio *bio)
 	 * For a REQ_NOWAIT based request, return -EOPNOTSUPP
 	 * if queue does not support NOWAIT.
 	 */
-	if ((bio->bi_opf & REQ_NOWAIT) && !blk_queue_nowait(q))
+	if ((bio->bi_opf & REQ_NOWAIT) && !blk_queue_nowait(q)) 
 		goto not_supported;
 
 	if (should_fail_bio(bio))
@@ -1015,6 +1022,11 @@ static blk_qc_t __submit_bio_noacct_mq(struct bio *bio)
 	} while ((bio = bio_list_pop(&bio_list[0])));
 
 	current->bio_list = NULL;
+
+	// zhengxd: kernel stat
+	// atomic_long_add(ktime_sub(ktime_get(), block_start), &submit_bio_time);
+
+
 	return ret;
 }
 
@@ -1044,6 +1056,7 @@ blk_qc_t submit_bio_noacct(struct bio *bio)
 	}
 
 	if (!bio->bi_bdev->bd_disk->fops->submit_bio)
+		//zhengxd: nvme device path
 		return __submit_bio_noacct_mq(bio);
 	return __submit_bio_noacct(bio);
 }
@@ -1062,8 +1075,11 @@ EXPORT_SYMBOL(submit_bio_noacct);
  * in @bio.  The bio must NOT be touched by thecaller until ->bi_end_io() has
  * been called.
  */
+//zhengxd: block entry
 blk_qc_t submit_bio(struct bio *bio)
 {
+	// zhengxd: kernel stat
+	// block_start = ktime_get();
 	if (blkcg_punt_bio_submit(bio))
 		return BLK_QC_T_NONE;
 

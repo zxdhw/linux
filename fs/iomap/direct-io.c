@@ -3,6 +3,11 @@
  * Copyright (C) 2010 Red Hat, Inc.
  * Copyright (c) 2016-2018 Christoph Hellwig.
  */
+#include "linux/kern_levels.h"
+#include "linux/ktime.h"
+#include "linux/mm.h"
+#include "linux/printk.h"
+#include "linux/timekeeping.h"
 #include <linux/module.h>
 #include <linux/compiler.h>
 #include <linux/fs.h>
@@ -11,6 +16,7 @@
 #include <linux/uio.h>
 #include <linux/task_io_accounting_ops.h>
 #include "trace.h"
+#include <linux/filter.h>
 
 #include "../internal.h"
 
@@ -49,6 +55,29 @@ struct iomap_dio {
 	};
 };
 
+/*----zhengxd kernel stat*/
+extern atomic_long_t filemap_wait_time;
+extern atomic_long_t filemap_wait_count;
+extern atomic_long_t iomap_hit_time;
+extern atomic_long_t iomap_hit_count;
+extern atomic_long_t get_page_time;
+extern atomic_long_t get_page_count;
+extern atomic_long_t hit_buf_time;
+extern atomic_long_t hit_buf_count;
+extern atomic_long_t bio_time;
+extern atomic_long_t bio_count;
+extern atomic_long_t fs_time;
+extern atomic_long_t fs_count;
+extern ktime_t fs_start;
+extern atomic_long_t dio_time;
+extern atomic_long_t dio_count;
+extern atomic_long_t fs_submit_time;
+extern atomic_long_t fs_submit_count;
+extern atomic_long_t plug_time;
+extern atomic_long_t plug_count;
+
+/*----zhengxd kernel stat*/
+
 int iomap_dio_iopoll(struct kiocb *kiocb, bool spin)
 {
 	struct request_queue *q = READ_ONCE(kiocb->private);
@@ -66,14 +95,20 @@ static void iomap_dio_submit_bio(struct iomap_dio *dio, struct iomap *iomap,
 
 	if (dio->iocb->ki_flags & IOCB_HIPRI)
 		bio_set_polled(bio, dio->iocb);
-
 	dio->submit.last_queue = bdev_get_queue(iomap->bdev);
+
+	// atomic_long_add(ktime_sub(ktime_get(), fs_start), &fs_time);
+
+	// ktime_t submit_start=ktime_get();
 	if (dio->dops && dio->dops->submit_io)
 		dio->submit.cookie = dio->dops->submit_io(
 				file_inode(dio->iocb->ki_filp),
 				iomap, bio, pos);
 	else
 		dio->submit.cookie = submit_bio(bio);
+	
+	// atomic_long_add(ktime_sub(ktime_get(), submit_start), &fs_submit_time);
+
 }
 
 ssize_t iomap_dio_complete(struct iomap_dio *dio)
@@ -155,8 +190,14 @@ static void iomap_dio_bio_end_io(struct bio *bio)
 	struct iomap_dio *dio = bio->bi_private;
 	bool should_dirty = (dio->flags & IOMAP_DIO_DIRTY);
 
-	if (bio->bi_status)
+	if(bio->hit_enabled){
+		kfree(dio->iocb->hit);
+		bio->hit = NULL;
+		dio->iocb->hit = NULL;
+	}
+	if (bio->bi_status){
 		iomap_dio_set_error(dio, blk_status_to_errno(bio->bi_status));
+	}
 
 	if (atomic_dec_and_test(&dio->ref)) {
 		if (dio->wait_for_completion) {
@@ -277,7 +318,9 @@ iomap_dio_bio_actor(struct inode *inode, loff_t pos, loff_t length,
 	 * we are done.
 	 */
 	orig_count = iov_iter_count(dio->submit.iter);
-	iov_iter_truncate(dio->submit.iter, length);
+	//zhengxd： disable truncate
+	if(!dio->iocb->hit_enabled)
+		iov_iter_truncate(dio->submit.iter, length);
 
 	if (!iov_iter_count(dio->submit.iter))
 		goto out;
@@ -296,6 +339,7 @@ iomap_dio_bio_actor(struct inode *inode, loff_t pos, loff_t length,
 	 */
 	bio_opf = iomap_dio_bio_opflags(dio, iomap, use_fua);
 
+	//zhengxd: max: 256 page; return the number of page alignments
 	nr_pages = bio_iov_vecs_to_alloc(dio->submit.iter, BIO_MAX_VECS);
 	do {
 		size_t n;
@@ -314,7 +358,15 @@ iomap_dio_bio_actor(struct inode *inode, loff_t pos, loff_t length,
 		bio->bi_end_io = iomap_dio_bio_end_io;
 		bio->bi_opf = bio_opf;
 
+		//zhengxd: bio_iov_iter_get_page need hit_enabled
+		bio->hit_enabled = dio->iocb->hit_enabled;
+
+		// zhengxd: kernel stat
+		// ktime_t get_page_start = ktime_get();
 		ret = bio_iov_iter_get_pages(bio, dio->submit.iter);
+		// zhengxd: kernel stat
+		// atomic_long_add(ktime_sub(ktime_get(), get_page_start), &get_page_time);
+
 		if (unlikely(ret)) {
 			/*
 			 * We have to stop part way through an IO. We must fall
@@ -326,19 +378,74 @@ iomap_dio_bio_actor(struct inode *inode, loff_t pos, loff_t length,
 			goto zero_tail;
 		}
 
+		if (bio->hit_enabled) {
+
+			//zhengxd: init bi_size with data_len
+			bio->bi_iter.bi_size = dio->iocb->data_len;
+			bio->hit = dio->iocb->hit;
+			u64 len, end, offset;
+			int iter;
+			if(bio->hit->in_use){
+				for(iter = 0; iter <= bio->hit->max && (iter <= HIT_MAX) ; iter++){
+					//zhengxd: size always == 4096
+					len = 4096;
+					offset = bio->hit->addr[iter];
+					struct iomap iomap_t = { .type = IOMAP_HOLE };
+					struct iomap srcmap_t = { .type = IOMAP_HOLE };
+					ret = dio->iocb->ops->iomap_begin(inode, offset, len, iomap->flags, &iomap_t, &srcmap_t);
+					if (ret){
+						bio_put(bio);
+						return ret;
+					}
+					if (WARN_ON(iomap_t.offset > offset)) {
+						bio_put(bio);
+						return -EIO;
+					}
+					if (WARN_ON(iomap_t.length == 0)) {
+						bio_put(bio);
+						return -EIO;
+					}
+					
+					end = iomap_t.offset + iomap_t.length;
+					if (srcmap_t.type != IOMAP_HOLE)
+						end = min(end, srcmap_t.offset + srcmap_t.length);
+					//zhengxd: length check and cut
+					if (offset + length > end)
+						len = end - offset;
+					// lba in 512B
+					if(len != 4096){
+						printk("----iomap hit error: length is %lld", len);
+						bio_put(bio);
+						return -EIO;
+					}
+					bio->hit->addr[iter] = iomap_sector(&iomap_t, offset);
+				
+				}
+			}
+		}
+
+		//zhengxd: nr_pages > 256 (error)
 		n = bio->bi_iter.bi_size;
 		if (dio->flags & IOMAP_DIO_WRITE) {
 			task_io_account_write(n);
 		} else {
 			if (dio->flags & IOMAP_DIO_DIRTY)
+			//zhengxd: dirty lock(release in iomap_dio_bio_end_io)
 				bio_set_pages_dirty(bio);
 		}
 
+		//zhengxd： dio->size initial value is 0
 		dio->size += n;
 		copied += n;
 
 		nr_pages = bio_iov_vecs_to_alloc(dio->submit.iter,
 						 BIO_MAX_VECS);
+		if (bio->hit_enabled) {
+			if(nr_pages > 0){
+				printk("----iomap dio error: nrpage is %d",nr_pages);
+			}
+		}
+		//zhengxd: hit only submit once
 		iomap_dio_submit_bio(dio, iomap, bio, pos);
 		pos += n;
 	} while (nr_pages);
@@ -415,6 +522,7 @@ iomap_dio_actor(struct inode *inode, loff_t pos, loff_t length,
 		if (!(dio->flags & IOMAP_DIO_WRITE))
 			return iomap_dio_hole_actor(length, dio);
 		return iomap_dio_bio_actor(inode, pos, length, dio, iomap);
+	// zhengxd: mapped address
 	case IOMAP_MAPPED:
 		return iomap_dio_bio_actor(inode, pos, length, dio, iomap);
 	case IOMAP_INLINE:
@@ -453,10 +561,23 @@ __iomap_dio_rw(struct kiocb *iocb, struct iov_iter *iter,
 		unsigned int dio_flags)
 {
 	struct address_space *mapping = iocb->ki_filp->f_mapping;
+	// zhengxd: get file inode(iomap get a range address map with inode )
 	struct inode *inode = file_inode(iocb->ki_filp);
+	//zhengxd: get buffer size
 	size_t count = iov_iter_count(iter);
+	//zhengxd: get data size
+	size_t data_len = iocb->data_len;
 	loff_t pos = iocb->ki_pos;
-	loff_t end = iocb->ki_pos + count - 1, ret = 0;
+	// loff_t end = iocb->ki_pos + data_len - 1, ret = 0;
+	loff_t end, ret = 0;
+	if(iocb->hit_enabled){
+		//zhengxd: new end init
+		end = iocb->ki_pos + data_len - 1;
+	} else {
+		//zhengxd: old init end
+		end = iocb->ki_pos + count - 1;
+	}
+
 	bool wait_for_completion =
 		is_sync_kiocb(iocb) || (dio_flags & IOMAP_DIO_FORCE_WAIT);
 	unsigned int iomap_flags = IOMAP_DIRECT;
@@ -464,6 +585,9 @@ __iomap_dio_rw(struct kiocb *iocb, struct iov_iter *iter,
 	struct iomap_dio *dio;
 
 	if (!count)
+		return NULL;
+	//zhengxd: datalen assert
+	if(iocb->hit_enabled && !data_len)
 		return NULL;
 
 	dio = kmalloc(sizeof(*dio), GFP_KERNEL);
@@ -487,6 +611,7 @@ __iomap_dio_rw(struct kiocb *iocb, struct iov_iter *iter,
 		if (pos >= dio->i_size)
 			goto out_free_dio;
 
+		// zhengxd: set dirty flag
 		if (iter_is_iovec(iter))
 			dio->flags |= IOMAP_DIO_DIRTY;
 	} else {
@@ -521,10 +646,37 @@ __iomap_dio_rw(struct kiocb *iocb, struct iov_iter *iter,
 			goto out_free_dio;
 		iomap_flags |= IOMAP_OVERWRITE_ONLY;
 	}
-
+	// ktime_t filemap_wait_start = ktime_get();
 	ret = filemap_write_and_wait_range(mapping, pos, end);
+	// atomic_long_add(ktime_sub(ktime_get(), filemap_wait_start), &filemap_wait_time);
 	if (ret)
 		goto out_free_dio;
+
+	if(iocb->hit_enabled){
+		// zhengxd: kernel stat
+		// ktime_t hit_start = ktime_get();
+		struct hitchhiker *hit;
+		hit = kmalloc(sizeof(struct hitchhiker), GFP_KERNEL);
+		if(!hit){
+			goto out_free_dio;
+		}
+		if (unlikely(copy_from_user(hit, dio->iocb->hit, sizeof(struct hitchhiker)))){
+			goto out_free_dio;
+		}
+		
+		// atomic_long_add(ktime_sub(ktime_get(), hit_start), &hit_buf_time);
+		dio->iocb->hit = hit;
+
+		int i;
+		for(i = 0; i <= iocb->hit->max && i <= HIT_MAX; i++){
+			ret = rw_verify_area(READ, iocb->ki_filp, &iocb->hit->addr[i], data_len);
+			if (ret)
+				goto out_free_dio;
+			ret = filemap_write_and_wait_range(mapping, iocb->hit->addr[i], (iocb->hit->addr[i] + data_len - 1));
+			if (ret)
+				goto out_free_dio;
+		}
+	}
 
 	if (iov_iter_rw(iter) == WRITE) {
 		/*
@@ -550,8 +702,16 @@ __iomap_dio_rw(struct kiocb *iocb, struct iov_iter *iter,
 
 	blk_start_plug(&plug);
 	do {
-		ret = iomap_apply(inode, pos, count, iomap_flags, ops, dio,
-				iomap_dio_actor);
+		//zhengxd: pass datalen instead of buffer count； buffer count pass with dio->submit_iter
+		// ret = iomap_apply(inode, pos, data_len, iomap_flags, ops, dio,
+		// 					iomap_dio_actor);
+		if(iocb->hit_enabled){
+			ret = iomap_apply(inode, pos, data_len, iomap_flags, ops, dio,
+					iomap_dio_actor);
+		}else{
+			ret = iomap_apply(inode, pos, count, iomap_flags, ops, dio,
+					iomap_dio_actor);
+		}
 		if (ret <= 0) {
 			/* magic error code to fall back to buffered I/O */
 			if (ret == -ENOTBLK) {
@@ -562,6 +722,7 @@ __iomap_dio_rw(struct kiocb *iocb, struct iov_iter *iter,
 		}
 		pos += ret;
 
+		//zhengxd: if read out of file, roll back
 		if (iov_iter_rw(iter) == READ && pos >= dio->i_size) {
 			/*
 			 * We only report that we've read data up to i_size.
@@ -571,8 +732,20 @@ __iomap_dio_rw(struct kiocb *iocb, struct iov_iter *iter,
 			iov_iter_revert(iter, pos - dio->i_size);
 			break;
 		}
+	/*zhengxd: the LBA of req must be continuous. 
+	 *in V1.0 we just ignore this problem , and set host io is 4K
+	 *so, the do-while loop just execute once
+	 */
+		if(iocb->hit_enabled){
+			// iomap_dio_bio_actor: copied is 4096(iov_iter_reexpand(dio->submit.iter, orig_count - copied);)
+			// so we need set count == 0;
+			iov_iter_reexpand(iter, 0);
+		}
 	} while ((count = iov_iter_count(iter)) > 0);
+
+ 	// ktime_t plug_start = ktime_get();
 	blk_finish_plug(&plug);
+	// atomic_long_add(ktime_sub(ktime_get(), plug_start), &plug_time);
 
 	if (ret < 0)
 		iomap_dio_set_error(dio, ret);
@@ -637,6 +810,9 @@ iomap_dio_rw(struct kiocb *iocb, struct iov_iter *iter,
 		unsigned int dio_flags)
 {
 	struct iomap_dio *dio;
+	if(iocb->hit_enabled){
+		iocb->ops = ops;
+	}
 
 	dio = __iomap_dio_rw(iocb, iter, ops, dops, dio_flags);
 	if (IS_ERR_OR_NULL(dio))

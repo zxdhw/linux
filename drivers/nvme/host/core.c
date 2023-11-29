@@ -4,6 +4,7 @@
  * Copyright (c) 2011-2014, Intel Corporation.
  */
 
+#include "linux/workqueue.h"
 #include <linux/blkdev.h>
 #include <linux/blk-mq.h>
 #include <linux/compat.h>
@@ -335,7 +336,8 @@ static inline void nvme_end_req(struct request *req)
 
 void nvme_complete_rq(struct request *req)
 {
-	trace_nvme_complete_rq(req);
+	if(!req->hit || (req->hit && (req->main_tag < 0)) )
+		trace_nvme_complete_rq(req);
 	nvme_cleanup_cmd(req);
 
 	if (nvme_req(req)->ctrl->kas)
@@ -835,7 +837,10 @@ static inline blk_status_t nvme_setup_rw(struct nvme_ns *ns,
 
 	cmnd->rw.opcode = op;
 	cmnd->rw.nsid = cpu_to_le32(ns->head->ns_id);
+	// zhengxd: rq->__sector <=  bio->bi_iter.bi_sector <= iocb->ki_pos
 	cmnd->rw.slba = cpu_to_le64(nvme_sect_to_lba(ns, blk_rq_pos(req)));
+	// zhengxd: rq->__data_len <= bio->bi_iter.bi_size <= iocb->x2rp_data_len
+	// zhengxd: length (per sector)
 	cmnd->rw.length = cpu_to_le16((blk_rq_bytes(req) >> ns->lba_shift) - 1);
 
 	if (req_op(req) == REQ_OP_WRITE && ctrl->nr_streams)

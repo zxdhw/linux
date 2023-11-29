@@ -319,8 +319,16 @@ enum rw_hint {
 #define IOCB_WAITQ		(1 << 19)
 #define IOCB_NOIO		(1 << 20)
 
+struct hitchhiker;
+
 struct kiocb {
 	struct file		*ki_filp;
+	bool			hit_enabled;
+	struct hitchhiker __user	*hit;
+	// zhengxd: add data len; 
+	// represents a segment of file address space with ki_pos (start: ki_pos; end: ki_pos+xrp_data_len)
+	u64				data_len;
+	const struct iomap_ops *ops;
 
 	/* The 'ki_filp' pointer is shared in a union for aio */
 	randomized_struct_fields_start

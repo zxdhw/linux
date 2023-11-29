@@ -2,6 +2,7 @@
 #ifndef _LINUX_BLKDEV_H
 #define _LINUX_BLKDEV_H
 
+#include "asm-generic/int-ll64.h"
 #include <linux/sched.h>
 #include <linux/sched/clock.h>
 #include <linux/major.h>
@@ -232,6 +233,13 @@ struct request {
 		struct __call_single_data csd;
 		u64 fifo_time;
 	};
+	//zhengxd: hit related
+	u64 hit_value;
+	u64 hit;
+	u64 once;
+	unsigned int *hit_tags;
+	int main_tag;
+	struct request* main_req;
 
 	/*
 	 * completion callback.
@@ -1052,6 +1060,9 @@ static inline struct bio_vec req_bvec(struct request *rq)
 {
 	if (rq->rq_flags & RQF_SPECIAL_PAYLOAD)
 		return rq->special_vec;
+	if(rq->bio->hit_enabled){
+		return mp_bvec_iter_bvec_hit(rq->bio->bi_io_vec, rq->bio->bi_iter);
+	}
 	return mp_bvec_iter_bvec(rq->bio->bi_io_vec, rq->bio->bi_iter);
 }
 

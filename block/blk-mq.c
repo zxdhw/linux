@@ -5,6 +5,7 @@
  * Copyright (C) 2013-2014 Jens Axboe
  * Copyright (C) 2013-2014 Christoph Hellwig
  */
+#include "linux/ktime.h"
 #include <linux/kernel.h>
 #include <linux/module.h>
 #include <linux/backing-dev.h>
@@ -289,6 +290,12 @@ static struct request *blk_mq_rq_ctx_init(struct blk_mq_alloc_data *data,
 	}
 
 	/* csd/requeue_work/fifo_time is initialized before use */
+	//zhengxd: use for hitchhike
+	rq->main_tag = -1;
+	rq->once = 1;
+	rq->hit = 0;
+	rq->main_req = NULL;
+
 	rq->q = data->q;
 	rq->mq_ctx = data->ctx;
 	rq->mq_hctx = data->hctx;
@@ -345,12 +352,63 @@ static struct request *blk_mq_rq_ctx_init(struct blk_mq_alloc_data *data,
 	return rq;
 }
 
+static struct request *blk_mq_rq_ctx_init_hit(struct blk_mq_alloc_data *data,
+		unsigned int tag, int main_tag, struct request* req)
+{
+	struct blk_mq_tags *tags = blk_mq_tags_from_data(data);
+	struct request *rq = tags->static_rqs[tag];
+
+	rq->tag = tag;
+	rq->internal_tag = BLK_MQ_NO_TAG;
+
+	//zhengxd: use for complete
+	rq->main_tag = main_tag;
+	rq->hit = 1;
+	rq->main_req = req;
+	rq->once = 0;
+	//zhengxd: use for irq(command id -> req)
+	data->hctx->tags->rqs[tag] = rq;
+
+	// /* csd/requeue_work/fifo_time is initialized before use */
+	rq->q = data->q;
+	rq->mq_ctx = data->ctx;
+	rq->mq_hctx = data->hctx;
+	rq->rq_flags = 0;
+	rq->cmd_flags = 0;
+	rq->rq_disk = NULL;
+	
+	//zhengxd: use for stat(inflight)
+	rq->part = NULL;
+
+	rq->start_time_ns = 0;
+	rq->io_start_time_ns = 0;
+	rq->stats_sectors = 0;
+	rq->nr_phys_segments = 0;
+#if defined(CONFIG_BLK_DEV_INTEGRITY)
+	rq->nr_integrity_segments = 0;
+#endif
+
+// 	/* tag was already set */
+	WRITE_ONCE(rq->deadline, 0);
+
+	rq->timeout = 0;
+	rq->end_io = NULL;
+	rq->end_io_data = NULL;
+	rq->bio = NULL;
+	data->ctx->rq_dispatched[op_is_sync(data->cmd_flags)]++;
+	refcount_set(&rq->ref, 1);
+
+	data->hctx->queued++;
+	return rq;
+}
+
 static struct request *__blk_mq_alloc_request(struct blk_mq_alloc_data *data)
 {
 	struct request_queue *q = data->q;
 	struct elevator_queue *e = q->elevator;
 	u64 alloc_time_ns = 0;
 	unsigned int tag;
+	struct request* req;
 
 	/* alloc_time includes depth and tag waits */
 	if (blk_queue_rq_alloc_time(q))
@@ -392,10 +450,31 @@ retry:
 		 * that thread using a realtime scheduling class are migrated
 		 * off the CPU, and thus off the hctx that is going away.
 		 */
-		msleep(3);
+		msleep(1);
 		goto retry;
 	}
-	return blk_mq_rq_ctx_init(data, tag, alloc_time_ns);
+	req = blk_mq_rq_ctx_init(data, tag, alloc_time_ns);
+
+	// hit tag
+	if(data->hit){
+		int iter;
+		for(iter = 0; iter < data->hit; iter++){
+			data->hit_tags[iter] = blk_mq_get_tag_hit(data);
+			if (data->hit_tags[iter] == BLK_MQ_NO_TAG) {
+				/*
+				* Give up the CPU and sleep for a random short time to ensure
+				* that thread using a realtime scheduling class are migrated
+				* off the CPU, and thus off the hctx that is going away.
+				*/
+				io_schedule();
+				iter--;
+
+			} else {
+				blk_mq_rq_ctx_init_hit(data, data->hit_tags[iter], tag, req);
+			}
+		}
+	}
+	return req;
 }
 
 struct request *blk_mq_alloc_request(struct request_queue *q, unsigned int op,
@@ -495,12 +574,25 @@ static void __blk_mq_free_request(struct request *rq)
 	blk_crypto_free_request(rq);
 	blk_pm_mark_last_busy(rq);
 	rq->mq_hctx = NULL;
+
+	//zhengxd: tag check
+	// if(rq->main_tag > 0){
+	// 	printk("----put hit tag: %d", rq->tag);
+	// }
 	if (rq->tag != BLK_MQ_NO_TAG)
 		blk_mq_put_tag(hctx->tags, ctx, rq->tag);
+
+	//zhengxd: release tags
+	if(rq->hit_tags){
+		kfree(rq->hit_tags);
+		rq->hit_tags = NULL;
+		blk_queue_exit(q);
+	}
 	if (sched_tag != BLK_MQ_NO_TAG)
 		blk_mq_put_tag(hctx->sched_tags, ctx, sched_tag);
 	blk_mq_sched_restart(hctx);
-	blk_queue_exit(q);
+	if(!rq->hit)
+		blk_queue_exit(q);
 }
 
 void blk_mq_free_request(struct request *rq)
@@ -1907,6 +1999,15 @@ static int plug_rq_cmp(void *priv, struct list_head *a, struct list_head *b)
 
 	return blk_rq_pos(rqa) > blk_rq_pos(rqb);
 }
+//zhengxd: end block layer
+/*zhengxd: kernel stat*/
+extern atomic_long_t block_time;
+extern atomic_long_t block_count;
+extern ktime_t block_start;
+extern atomic_long_t queue_rq_time;
+extern atomic_long_t queue_rq_count;
+ktime_t plug_start;
+extern atomic_long_t plug_time;
 
 void blk_mq_flush_plug_list(struct blk_plug *plug, bool from_schedule)
 {
@@ -1952,6 +2053,7 @@ static void blk_mq_bio_to_request(struct request *rq, struct bio *bio,
 	if (bio->bi_opf & REQ_RAHEAD)
 		rq->cmd_flags |= REQ_FAILFAST_MASK;
 
+	// zhengxd: start pos
 	rq->__sector = bio->bi_iter.bi_sector;
 	rq->write_hint = bio->bi_write_hint;
 	blk_rq_bio_prep(rq, bio, nr_segs);
@@ -1962,6 +2064,7 @@ static void blk_mq_bio_to_request(struct request *rq, struct bio *bio,
 
 	blk_account_io_start(rq);
 }
+
 
 static blk_status_t __blk_mq_issue_directly(struct blk_mq_hw_ctx *hctx,
 					    struct request *rq,
@@ -1982,7 +2085,11 @@ static blk_status_t __blk_mq_issue_directly(struct blk_mq_hw_ctx *hctx,
 	 * Any other error (busy), just add it to our list as we
 	 * previously would have done.
 	 */
+	//zhengxd: block layer end 
+	// ktime_t driver_start = ktime_get();
 	ret = q->mq_ops->queue_rq(hctx, &bd);
+	// atomic_long_add(ktime_sub(ktime_get(), driver_start), &queue_rq_time);
+
 	switch (ret) {
 	case BLK_STS_OK:
 		blk_mq_update_dispatch_busy(hctx, false);
@@ -2095,6 +2202,7 @@ void blk_mq_try_issue_list_directly(struct blk_mq_hw_ctx *hctx,
 	int errors = 0;
 
 	while (!list_empty(list)) {
+		// plug_start = ktime_get();
 		blk_status_t ret;
 		struct request *rq = list_first_entry(list, struct request,
 				queuelist);
@@ -2138,6 +2246,10 @@ static void blk_add_rq_to_plug(struct blk_plug *plug, struct request *rq)
 	}
 }
 
+extern atomic_long_t req_time;
+extern atomic_long_t req_count;
+extern atomic_long_t hit_tag_time;
+extern atomic_long_t hit_tag_count;
 /**
  * blk_mq_submit_bio - Create and send a request to block device.
  * @bio: Bio pointer.
@@ -2153,8 +2265,10 @@ static void blk_add_rq_to_plug(struct blk_plug *plug, struct request *rq)
  *
  * Returns: Request queue cookie.
  */
+//zhengxd: mq entry
 blk_qc_t blk_mq_submit_bio(struct bio *bio)
 {
+
 	struct request_queue *q = bio->bi_bdev->bd_disk->queue;
 	const int is_sync = op_is_sync(bio->bi_opf);
 	const int is_flush_fua = op_is_flush(bio->bi_opf);
@@ -2170,16 +2284,26 @@ blk_qc_t blk_mq_submit_bio(struct bio *bio)
 	bool hipri;
 
 	blk_queue_bounce(q, &bio);
-	__blk_queue_split(&bio, &nr_segs);
+	//zhengxd: if(bio > max_sectors || segments >= max_segments) 
+	//zhengxd: fixme, check bufferlen && max
+	if(bio->hit_enabled && bio->hit->in_use){
+		nr_segs = bio->hit->max+2;
+	}else if(bio->hit_enabled && !bio->hit->in_use){
+		nr_segs = 1;
+	}else{
+		__blk_queue_split(&bio, &nr_segs);
+	}
 
+	//zhegnxd: data check protection(dont use)
 	if (!bio_integrity_prep(bio))
 		goto queue_exit;
 
-	if (!is_flush_fua && !blk_queue_nomerges(q) &&
+	//zhengxd: disbaled nomerge
+	if (!bio->hit_enabled && !is_flush_fua && !blk_queue_nomerges(q) &&
 	    blk_attempt_plug_merge(q, bio, nr_segs, &same_queue_rq))
 		goto queue_exit;
 
-	if (blk_mq_sched_bio_merge(q, bio, nr_segs))
+	if (!bio->hit_enabled && blk_mq_sched_bio_merge(q, bio, nr_segs))
 		goto queue_exit;
 
 	rq_qos_throttle(q, bio);
@@ -2187,6 +2311,16 @@ blk_qc_t blk_mq_submit_bio(struct bio *bio)
 	hipri = bio->bi_opf & REQ_HIPRI;
 
 	data.cmd_flags = bio->bi_opf;
+	data.hit = 0;
+	if(bio->hit_enabled && bio->hit->in_use){
+		//zhengxd: kernel stat
+		// ktime_t tag_start = ktime_get();
+		data.hit = bio->hit->max + 1;
+		data.hit_tags = kmalloc(sizeof(unsigned int) * (bio->hit->max + 1), GFP_KERNEL);
+		// atomic_long_add(ktime_sub(ktime_get(), tag_start), &hit_tag_time);
+	}
+
+	//zhengxd: alloc req from hctx->rqs
 	rq = __blk_mq_alloc_request(&data);
 	if (unlikely(!rq)) {
 		rq_qos_cleanup(q, bio);
@@ -2195,12 +2329,18 @@ blk_qc_t blk_mq_submit_bio(struct bio *bio)
 		goto queue_exit;
 	}
 
+	if(bio->hit_enabled && bio->hit->in_use){
+		rq->hit_tags = data.hit_tags;
+	}
+
 	trace_block_getrq(bio);
 
 	rq_qos_track(q, rq, bio);
 
+	//zhengxd: use for blk_qc_t(hitchhiker dont use)
 	cookie = request_to_qc_t(data.hctx, rq);
 
+	//zhengxd: bio -> req
 	blk_mq_bio_to_request(rq, bio, nr_segs);
 
 	ret = blk_crypto_init_request(rq);
@@ -2216,6 +2356,7 @@ blk_qc_t blk_mq_submit_bio(struct bio *bio)
 		/* Bypass scheduler for flush requests */
 		blk_insert_flush(rq);
 		blk_mq_run_hw_queue(data.hctx, true);
+	//zhengxd:  pci.c line 1769: {.commit_rqs	= nvme_commit_rqs} );
 	} else if (plug && (q->nr_hw_queues == 1 || q->mq_ops->commit_rqs ||
 				!blk_queue_nonrot(q))) {
 		/*
@@ -2227,12 +2368,12 @@ blk_qc_t blk_mq_submit_bio(struct bio *bio)
 		 */
 		unsigned int request_count = plug->rq_count;
 		struct request *last = NULL;
-
 		if (!request_count)
 			trace_block_plug(q);
 		else
 			last = list_entry_rq(plug->mq_list.prev);
 
+		//zhengxd: count >= 16 || last rq size > 128K
 		if (request_count >= BLK_MAX_REQUEST_COUNT || (last &&
 		    blk_rq_bytes(last) >= BLK_PLUG_FLUSH_SIZE)) {
 			blk_flush_plug_list(plug, false);

@@ -156,7 +156,7 @@ enum nvme_quirks {
  * Common request structure for NVMe passthrough.  All drivers must have
  * this structure as the first member of their request-private data.
  */
-struct nvme_request {
+struct  nvme_request {
 	struct nvme_command	*cmd;
 	union nvme_result	result;
 	u8			retries;
@@ -558,9 +558,9 @@ static inline bool nvme_try_complete_req(struct request *req, __le16 status,
 		union nvme_result result)
 {
 	struct nvme_request *rq = nvme_req(req);
-
 	rq->status = le16_to_cpu(status) >> 1;
 	rq->result = result;
+
 	/* inject error when permitted by fault injection framework */
 	nvme_should_fail(req);
 	if (unlikely(blk_should_fake_timeout(req->q)))

@@ -7,6 +7,7 @@
 #ifndef _LINUX_NVME_H
 #define _LINUX_NVME_H
 
+#include "asm-generic/int-ll64.h"
 #include <linux/types.h>
 #include <linux/uuid.h>
 
@@ -161,6 +162,7 @@ enum {
  * Submission and Completion Queue Entry Sizes for the NVM command set.
  * (In bytes and specified as a power of two (2^n)).
  */
+//zhengxd: entry size
 #define NVME_ADM_SQES       6
 #define NVME_NVM_IOSQES		6
 #define NVME_NVM_IOCQES		4

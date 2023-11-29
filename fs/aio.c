@@ -9,6 +9,9 @@
  *
  *	See ../COPYING for licensing terms.
  */
+#include "linux/kern_levels.h"
+#include "linux/ktime.h"
+#include "linux/timekeeping.h"
 #define pr_fmt(fmt) "%s: " fmt, __func__
 
 #include <linux/kernel.h>
@@ -230,6 +233,47 @@ static struct vfsmount *aio_mnt;
 
 static const struct file_operations aio_ring_fops;
 static const struct address_space_operations aio_ctx_aops;
+
+/*-----zhengxd kernel stat----*/
+extern atomic_long_t test_time;
+extern atomic_long_t test_count;
+extern atomic_long_t ktime_time;
+extern atomic_long_t ktime_count;
+
+extern atomic_long_t io_time_kernel;
+extern atomic_long_t io_count_kernel;
+
+extern atomic_long_t aio_time;
+extern atomic_long_t aio_count;
+
+extern atomic_long_t aio_hit_time;
+extern atomic_long_t aio_hit_count;
+
+extern atomic_long_t get_user_time;
+extern atomic_long_t get_user_count;
+
+extern atomic_long_t copy_user_time;
+extern atomic_long_t copy_user_count;
+
+extern atomic_long_t aio_req_time;
+extern atomic_long_t aio_req_count;
+
+extern atomic_long_t aio_fget_time;
+extern atomic_long_t aio_fget_count;
+
+extern atomic_long_t aio_prep_time;
+extern atomic_long_t aio_prep_count;
+
+extern atomic_long_t aio_setup_time;
+extern atomic_long_t aio_setup_count;
+
+extern atomic_long_t verify_time;
+extern atomic_long_t verify_count;
+
+extern atomic_long_t read_iter_time;
+extern atomic_long_t read_iter_count;
+ktime_t io_start;
+/*-----zhengxd kernel stat----*/
 
 static struct file *aio_private_file(struct kioctx *ctx, loff_t nr_pages)
 {
@@ -1422,6 +1466,11 @@ static void aio_remove_iocb(struct aio_kiocb *iocb)
 
 static void aio_complete_rw(struct kiocb *kiocb, long res, long res2)
 {
+	//zhengxd: hit ;
+	if(kiocb->hit_enabled){
+		kiocb->hit = NULL;
+	}
+
 	struct aio_kiocb *iocb = container_of(kiocb, struct aio_kiocb, rw);
 
 	if (!list_empty_careful(&iocb->ki_list))
@@ -1444,6 +1493,7 @@ static void aio_complete_rw(struct kiocb *kiocb, long res, long res2)
 	iocb_put(iocb);
 }
 
+// zhengxd：new: kiocb: x2rp_data_len init
 static int aio_prep_rw(struct kiocb *req, const struct iocb *iocb)
 {
 	int ret;
@@ -1451,6 +1501,10 @@ static int aio_prep_rw(struct kiocb *req, const struct iocb *iocb)
 	req->ki_complete = aio_complete_rw;
 	req->private = NULL;
 	req->ki_pos = iocb->aio_offset;
+	//zhengxd: new: data_len(aio_reserved2) init
+	if(req->hit_enabled){
+		req->data_len = iocb->aio_dsize;
+	}
 	req->ki_flags = iocb_flags(req->ki_filp);
 	if (iocb->aio_flags & IOCB_FLAG_RESFD)
 		req->ki_flags |= IOCB_EVENTFD;
@@ -1475,6 +1529,7 @@ static int aio_prep_rw(struct kiocb *req, const struct iocb *iocb)
 	if (unlikely(ret))
 		return ret;
 
+	// zhengxd: disable hipri（poll）
 	req->ki_flags &= ~IOCB_HIPRI; /* no one is going to poll for this I/O */
 	return 0;
 }
@@ -1484,14 +1539,19 @@ static ssize_t aio_setup_rw(int rw, const struct iocb *iocb,
 		struct iov_iter *iter)
 {
 	void __user *buf = (void __user *)(uintptr_t)iocb->aio_buf;
+	//zhengxd: buff len 
 	size_t len = iocb->aio_nbytes;
+	//zhengxd: fixme: check: aio_nbytes > dsize ?
 
 	if (!vectored) {
+		//zhengxd: packaging buffer in iov & iter, use *buf and len
+		// ktime_t setup_start = ktime_get();
 		ssize_t ret = import_single_range(rw, buf, len, *iovec, iter);
 		*iovec = NULL;
+		// atomic_long_add(ktime_sub(ktime_get(), setup_start), &aio_setup_time);
 		return ret;
 	}
-
+	
 	return __import_iovec(rw, buf, len, UIO_FASTIOV, iovec, iter, compat);
 }
 
@@ -1534,11 +1594,19 @@ static int aio_read(struct kiocb *req, const struct iocb *iocb,
 		return -EINVAL;
 
 	ret = aio_setup_rw(READ, iocb, &iovec, vectored, compat, &iter);
+
 	if (ret < 0)
 		return ret;
+
+	// zhengxd: kernel stat
+	// ktime_t verify_start = ktime_get();
 	ret = rw_verify_area(READ, file, &req->ki_pos, iov_iter_count(&iter));
+	// zhengxd: kernel stat : use for io queue == 1 
+	// atomic_long_add(ktime_sub(ktime_get(), verify_start), &verify_time);
+	
 	if (!ret)
 		aio_rw_done(req, call_read_iter(file, req, &iter));
+
 	kfree(iovec);
 	return ret;
 }
@@ -1800,7 +1868,9 @@ static int __io_submit_one(struct kioctx *ctx, const struct iocb *iocb,
 			   struct iocb __user *user_iocb, struct aio_kiocb *req,
 			   bool compat)
 {
+
 	req->ki_filp = fget(iocb->aio_fildes);
+
 	if (unlikely(!req->ki_filp))
 		return -EBADF;
 
@@ -1856,15 +1926,16 @@ static int io_submit_one(struct kioctx *ctx, struct iocb __user *user_iocb,
 	struct aio_kiocb *req;
 	struct iocb iocb;
 	int err;
-
+	// ktime_t copy_start = ktime_get();
 	if (unlikely(copy_from_user(&iocb, user_iocb, sizeof(iocb))))
 		return -EFAULT;
-
-	/* enforce forwards compatibility on users */
-	if (unlikely(iocb.aio_reserved2)) {
-		pr_debug("EINVAL: reserve field set\n");
-		return -EINVAL;
-	}
+	// atomic_long_add(ktime_sub(ktime_get(), copy_start), &copy_user_time);
+	//zhengxd: comment
+	// /* enforce forwards compatibility on users */
+	// if (unlikely(iocb.aio_reserved2)) {
+	// 	pr_debug("EINVAL: reserve field set\n");
+	// 	return -EINVAL;
+	// }
 
 	/* prevent overflows */
 	if (unlikely(
@@ -1877,6 +1948,7 @@ static int io_submit_one(struct kioctx *ctx, struct iocb __user *user_iocb,
 	}
 
 	req = aio_get_req(ctx);
+
 	if (unlikely(!req))
 		return -EAGAIN;
 
@@ -1912,6 +1984,8 @@ static int io_submit_one(struct kioctx *ctx, struct iocb __user *user_iocb,
 SYSCALL_DEFINE3(io_submit, aio_context_t, ctx_id, long, nr,
 		struct iocb __user * __user *, iocbpp)
 {
+	// zhengxd: kernel stat
+	// io_start = ktime_get();
 	struct kioctx *ctx;
 	long ret = 0;
 	int i = 0;
@@ -1934,19 +2008,235 @@ SYSCALL_DEFINE3(io_submit, aio_context_t, ctx_id, long, nr,
 	for (i = 0; i < nr; i++) {
 		struct iocb __user *user_iocb;
 
+		// ktime_t get_start = ktime_get();
 		if (unlikely(get_user(user_iocb, iocbpp + i))) {
 			ret = -EFAULT;
 			break;
 		}
+		// atomic_long_add(ktime_sub(ktime_get(), get_start), &get_user_time);
 
 		ret = io_submit_one(ctx, user_iocb, false);
+
 		if (ret)
 			break;
 	}
 	if (nr > AIO_PLUG_THRESHOLD)
 		blk_finish_plug(&plug);
+	
+	percpu_ref_put(&ctx->users);
+
+	// zhengxd: kernel stat
+	// atomic_long_inc(&io_count_kernel);
+	// atomic_long_add(ktime_sub(ktime_get(), io_start), &io_time_kernel);
+	return i ? i : ret;
+}
+
+/*zhengxd: aio_read_hit
+*  @hitchhiker: request info
+*/
+static int aio_read_hit(struct kiocb *req, const struct iocb *iocb,
+			bool vectored, bool compat, struct hitchhiker __user *hit)
+{
+	struct iovec inline_vecs[UIO_FASTIOV], *iovec = inline_vecs;
+	struct iov_iter iter;
+	struct file *file;
+	int ret;
+	// zhengxd: kiocb init with hit info
+	req->hit = hit;
+	req->hit_enabled = true;
+	// zhengxd: new: kiocb init data_len
+	ret = aio_prep_rw(req, iocb);
+	if (ret)
+		return ret;
+	file = req->ki_filp;
+	if (unlikely(!(file->f_mode & FMODE_READ)))
+		return -EBADF;
+	ret = -EINVAL;
+	if (unlikely(!file->f_op->read_iter))
+		return -EINVAL;
+	// zhengxd:  packaging buffer in iov & iter, use '*buf' and 'aio_nbytes'
+	ret = aio_setup_rw(READ, iocb, &iovec, vectored, compat, &iter);
+	if (ret < 0)
+		return ret;
+
+	//zhengxd: new: data_len; old: iov_iter_count(&iter);
+	ret = rw_verify_area(READ, file, &req->ki_pos, req->data_len);
+	if (!ret)
+		aio_rw_done(req, call_read_iter(file, req, &iter));
+
+	kfree(iovec);
+	return ret;
+}
+/* zhengxd: __io_submit_hit_one
+*  @hitchhiker: request info
+*/
+static int __io_submit_hit_one(struct kioctx *ctx, const struct iocb *iocb,
+			   struct iocb __user *user_iocb, struct aio_kiocb *req,
+			   bool compat, struct hitchhiker __user *hit)
+{
+	req->ki_filp = fget(iocb->aio_fildes);
+	if (unlikely(!req->ki_filp))
+		return -EBADF;
+
+	if (iocb->aio_flags & IOCB_FLAG_RESFD) {
+		struct eventfd_ctx *eventfd;
+		/*
+		 * If the IOCB_FLAG_RESFD flag of aio_flags is set, get an
+		 * instance of the file* now. The file descriptor must be
+		 * an eventfd() fd, and will be signaled for each completed
+		 * event using the eventfd_signal() function.
+		 */
+		eventfd = eventfd_ctx_fdget(iocb->aio_resfd);
+		if (IS_ERR(eventfd))
+			return PTR_ERR(eventfd);
+
+		req->ki_eventfd = eventfd;
+	}
+
+	if (unlikely(put_user(KIOCB_KEY, &user_iocb->aio_key))) {
+		pr_debug("EFAULT: aio_key\n");
+		return -EFAULT;
+	}
+	req->ki_res.obj = (u64)(unsigned long)user_iocb;
+	req->ki_res.data = iocb->aio_data;
+	req->ki_res.res = 0;
+	req->ki_res.res2 = 0;
+
+	switch (iocb->aio_lio_opcode) {
+	case IOCB_CMD_PREAD:
+		return aio_read_hit(&req->rw, iocb, false, compat, hit);
+	case IOCB_CMD_PWRITE:
+		return aio_write(&req->rw, iocb, false, compat);
+	case IOCB_CMD_PREADV:
+		return aio_read(&req->rw, iocb, true, compat);
+	case IOCB_CMD_PWRITEV:
+		return aio_write(&req->rw, iocb, true, compat);
+	case IOCB_CMD_FSYNC:
+		return aio_fsync(&req->fsync, iocb, false);
+	case IOCB_CMD_FDSYNC:
+		return aio_fsync(&req->fsync, iocb, true);
+	case IOCB_CMD_POLL:
+		return aio_poll(req, iocb);
+	default:
+		pr_debug("invalid aio operation %d\n", iocb->aio_lio_opcode);
+		return -EINVAL;
+	}
+}
+
+/* zhengxd: io_submit_hit_one
+*  @hitchhiker: request info
+*/
+static int io_submit_hit_one(struct kioctx *ctx, struct iocb __user *user_iocb,
+			 bool compat, struct hitchhiker __user * hit_buf)
+{
+	struct aio_kiocb *req;
+	struct iocb iocb;
+	// struct hitchhiker *hit;
+	int err;
+	// ktime_t copy_start = ktime_get();
+	if (unlikely(copy_from_user(&iocb, user_iocb, sizeof(iocb))))
+		return -EFAULT;
+	// atomic_long_add(ktime_sub(ktime_get(), copy_start), &copy_user_time);
+
+	/* enforce forwards compatibility on users */
+
+	// zhengxd: new: x2rp use reserved2, so comment out this.
+	// if (unlikely(iocb.aio_reserved2)) {
+	// 	pr_debug("EINVAL: reserve field set\n");
+	// 	return -EINVAL;
+	// }
+	/* prevent overflows */
+	if (unlikely(
+	    (iocb.aio_buf != (unsigned long)iocb.aio_buf) ||
+	    (iocb.aio_nbytes != (size_t)iocb.aio_nbytes) ||
+	    ((ssize_t)iocb.aio_nbytes < 0) || ((ssize_t)iocb.aio_nbytes & (4096 - 1)) !=0 )
+	   ){
+		printk("----aio error: iocb.aio_nbytes is %llu",iocb.aio_nbytes);
+		pr_debug("EINVAL: overflow check\n");
+		return -EINVAL;
+	}
+
+	req = aio_get_req(ctx);
+	if (unlikely(!req))
+		return -EAGAIN;
+
+	err = __io_submit_hit_one(ctx, &iocb, user_iocb, req, compat, hit_buf);
+
+	/* Done with the synchronous reference */
+	iocb_put(req);
+
+	/*
+	 * If err is 0, we'd either done aio_complete() ourselves or have
+	 * arranged for that to be done asynchronously.  Anything non-zero
+	 * means that we need to destroy req ourselves.
+	 */
+	if (unlikely(err)) {
+		iocb_destroy(req);
+		put_reqs_available(ctx, 1);
+	}
+	return err;
+}
+
+/* sys_io_submit_hit:
+ *	Queue the nr iocbs pointed to by iocbpp for processing.  Returns
+ *	the number of iocbs queued.  May return -EINVAL if the aio_context
+ *	specified by ctx_id is invalid, if nr is < 0, if the iocb at
+ *	*iocbpp[0] is not properly initialized, if the operation specified
+ *	is invalid for the file descriptor in the iocb.  May fail with
+ *	-EFAULT if any of the data structures point to invalid data.  May
+ *	fail with -EBADF if the file descriptor specified in the first
+ *	iocb is invalid.  May fail with -EAGAIN if insufficient resources
+ *	are available to queue any iocbs.  Will return 0 if nr is 0.  Will
+ *	fail with -ENOSYS if not implemented.
+ *  add:
+ *  @hit_bufs: every io has a hit_buf 
+ */
+// zhengxd: aio_hit entry
+SYSCALL_DEFINE4(io_submit_hit, aio_context_t, ctx_id, long, nr, struct iocb __user * __user *, iocbpp,
+					struct hitchhiker __user * __user *, hit_bufs)
+{
+	// zhengxd: kernel stat
+	// io_start = ktime_get();
+	struct kioctx *ctx;
+	long ret = 0;
+	int i = 0;
+
+	if (unlikely(nr < 0))
+		return -EINVAL;
+
+	ctx = lookup_ioctx(ctx_id);
+	if (unlikely(!ctx)) {
+		pr_debug("EINVAL: invalid context id\n");
+		return -EINVAL;
+	}
+
+	if (nr > ctx->nr_events)
+		nr = ctx->nr_events;
+
+	for (i = 0; i < nr; i++) {
+		// zhengxd: every aio req has a scratch_buf, like __user* iocb
+		struct hitchhiker __user * hit_buf;
+		//zhengxd: scratch size : 4096(char: 1 bytes )
+		if (unlikely(get_user(hit_buf, hit_bufs + i))) {
+			ret = -EFAULT;
+			break;
+		}
+		struct iocb __user *user_iocb;
+		if (unlikely(get_user(user_iocb, iocbpp + i))) {
+			ret = -EFAULT;
+			break;
+		}
+		// zhengxd: submit io one by one 
+		ret = io_submit_hit_one(ctx, user_iocb, false, hit_buf);
+		if (ret)
+			break;		
+	}
 
 	percpu_ref_put(&ctx->users);
+
+	// zhengxd: kernel stat
+	// atomic_long_inc(&io_count_kernel);
+	// atomic_long_add(ktime_sub(ktime_get(), io_start), &io_time_kernel);
 	return i ? i : ret;
 }
 

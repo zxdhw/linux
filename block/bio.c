@@ -2,6 +2,7 @@
 /*
  * Copyright (C) 2001 Jens Axboe <axboe@kernel.dk>
  */
+#include "linux/kern_levels.h"
 #include <linux/mm.h>
 #include <linux/swap.h>
 #include <linux/bio.h>
@@ -698,14 +699,17 @@ static inline bool page_is_mergeable(const struct bio_vec *bv,
 	phys_addr_t vec_end_addr = page_to_phys(bv->bv_page) + bv_end - 1;
 	phys_addr_t page_addr = page_to_phys(page);
 
+	//zhengxd: Check whether the physical addresses are contiguous 
 	if (vec_end_addr + 1 != page_addr + off)
 		return false;
 	if (xen_domain() && !xen_biovec_phys_mergeable(bv, page))
 		return false;
 
+	//zhengxd： Check whether the same physical addresses 
 	*same_page = ((vec_end_addr & PAGE_MASK) == page_addr);
 	if (*same_page)
 		return true;
+	// zhengxd： Check whether the page addresses are contiguous 
 	return (bv->bv_page + bv_end / PAGE_SIZE) == (page + off / PAGE_SIZE);
 }
 
@@ -871,7 +875,7 @@ bool __bio_try_merge_page(struct bio *bio, struct page *page,
 				return false;
 			}
 			bv->bv_len += len;
-			bio->bi_iter.bi_size += len;
+			if(!bio->hit_enabled) bio->bi_iter.bi_size += len;
 			return true;
 		}
 	}
@@ -901,7 +905,8 @@ void __bio_add_page(struct bio *bio, struct page *page,
 	bv->bv_offset = off;
 	bv->bv_len = len;
 
-	bio->bi_iter.bi_size += len;
+	//zhengxd: bi_size init with dataszie instead of buffer len
+	if(!bio->hit_enabled) bio->bi_iter.bi_size += len;
 	bio->bi_vcnt++;
 
 	if (!bio_flagged(bio, BIO_WORKINGSET) && unlikely(PageWorkingset(page)))
@@ -941,10 +946,23 @@ void bio_release_pages(struct bio *bio, bool mark_dirty)
 	if (bio_flagged(bio, BIO_NO_PAGE_REF))
 		return;
 
-	bio_for_each_segment_all(bvec, bio, iter_all) {
-		if (mark_dirty && !PageCompound(bvec->bv_page))
-			set_page_dirty_lock(bvec->bv_page);
-		put_page(bvec->bv_page);
+	if(bio->hit_enabled){
+		unsigned int idx; 
+		for (idx = 0; idx < bio->bi_vcnt;idx++){
+			bvec = &bio->bi_io_vec[idx];
+			// printk(KERN_DEBUG "bio release page:  bio_vec is %d\n", idx);
+			if(bvec->bv_page){
+				put_page(bvec->bv_page);
+			} else {
+    			printk(KERN_WARNING "bio release page: Unexpected NULL page in bio_vec\n");
+			}		
+		}
+	} else {
+		bio_for_each_segment_all(bvec, bio, iter_all) {
+			if (mark_dirty && !PageCompound(bvec->bv_page))
+				set_page_dirty_lock(bvec->bv_page);
+			put_page(bvec->bv_page);
+		}
 	}
 }
 EXPORT_SYMBOL_GPL(bio_release_pages);
@@ -1019,7 +1037,14 @@ static int __bio_iov_iter_get_pages(struct bio *bio, struct iov_iter *iter)
 
 		len = min_t(size_t, PAGE_SIZE - offset, left);
 
-		if (__bio_try_merge_page(bio, page, len, offset, &same_page)) {
+		// zhengxd: Consecutive physical pages(not page address)
+		if(bio->hit_enabled){
+			if (WARN_ON_ONCE(bio_full(bio, len)))
+                return -EINVAL;
+			//zhengxd: modify bio->bi_iter.bi_size
+			__bio_add_page(bio, page, len, offset);
+			
+		} else if (__bio_try_merge_page(bio, page, len, offset, &same_page)) {
 			if (same_page)
 				put_page(page);
 		} else {

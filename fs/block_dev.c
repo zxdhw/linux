@@ -332,6 +332,12 @@ static void blkdev_bio_end_io(struct bio *bio)
 	struct blkdev_dio *dio = bio->bi_private;
 	bool should_dirty = dio->should_dirty;
 
+	if(bio->hit_enabled && bio->hit){
+		kfree(dio->iocb->hit);
+		bio->hit = NULL;
+		dio->iocb->hit = NULL;
+	}
+
 	if (bio->bi_status && !dio->bio.bi_status)
 		dio->bio.bi_status = bio->bi_status;
 
@@ -415,11 +421,59 @@ static ssize_t __blkdev_direct_IO(struct kiocb *iocb, struct iov_iter *iter,
 		bio->bi_end_io = blkdev_bio_end_io;
 		bio->bi_ioprio = iocb->ki_ioprio;
 
+		//zhengxd: before get page
+		bio->hit_enabled = iocb->hit_enabled;
+
 		ret = bio_iov_iter_get_pages(bio, iter);
 		if (unlikely(ret)) {
 			bio->bi_status = BLK_STS_IOERR;
 			bio_endio(bio);
 			break;
+		}
+
+		if (bio->hit_enabled) {
+			// zhengxd: address check
+			struct hitchhiker *hit;
+			hit = kmalloc(sizeof(struct hitchhiker), GFP_KERNEL);
+			if(!hit){
+				bio->bi_status = BLK_STS_IOERR;
+				bio_endio(bio);
+				break;
+			}
+			if (unlikely(copy_from_user(hit, iocb->hit, sizeof(struct hitchhiker)))){
+				bio->bi_status = BLK_STS_IOERR;
+				bio_endio(bio);
+				break;
+			}
+
+			//zhengxd: init bi_size with data_len
+			bio->bi_iter.bi_size = iocb->data_len;
+			iocb->hit = hit;
+			bio->hit = iocb->hit;
+			
+			if (bio->hit->in_use){
+				int i,ret;
+				loff_t offset;
+				struct address_space *mapping = file->f_mapping;
+				loff_t size = i_size_read(inode);
+				for(i = 0; i <= iocb->hit->max && i <= HIT_MAX; i++){
+					offset = iocb->hit->addr[i];
+
+					if (offset >= size){
+						bio->bi_status = BLK_STS_IOERR;
+						bio_endio(bio);
+						break;
+					}
+					ret = filemap_write_and_wait_range(mapping,
+								offset, offset + iocb->data_len - 1);
+					if (ret < 0){
+						bio->bi_status = BLK_STS_IOERR;
+						bio_endio(bio);
+						break;
+					}
+					iocb->hit->addr[i] = offset >> 9;
+				}
+			}
 		}
 
 		if (is_read) {
@@ -436,6 +490,11 @@ static ssize_t __blkdev_direct_IO(struct kiocb *iocb, struct iov_iter *iter,
 		dio->size += bio->bi_iter.bi_size;
 		pos += bio->bi_iter.bi_size;
 
+		//zhengxd: last bio?
+		if(iocb->hit_enabled){
+			// so we need set count == 0;
+			iov_iter_reexpand(iter, 0);
+		}
 		nr_pages = bio_iov_vecs_to_alloc(iter, BIO_MAX_VECS);
 		if (!nr_pages) {
 			bool polled = false;
@@ -1723,7 +1782,7 @@ ssize_t blkdev_read_iter(struct kiocb *iocb, struct iov_iter *to)
 		return 0;
 
 	size -= pos;
-	iov_iter_truncate(to, size);
+	if(!iocb->hit_enabled) iov_iter_truncate(to, size);
 	return generic_file_read_iter(iocb, to);
 }
 EXPORT_SYMBOL_GPL(blkdev_read_iter);

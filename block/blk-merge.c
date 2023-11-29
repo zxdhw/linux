@@ -253,26 +253,40 @@ static struct bio *blk_bio_segment_split(struct request_queue *q,
 	const unsigned max_sectors = get_max_io_size(q, bio);
 	const unsigned max_segs = queue_max_segments(q);
 
-	bio_for_each_bvec(bv, bio, iter) {
-		/*
-		 * If the queue doesn't support SG gaps and adding this
-		 * offset would create a gap, disallow it.
-		 */
-		if (bvprvp && bvec_gap_to_prev(q, bvprvp, bv.bv_offset))
-			goto split;
+	if(bio->hit_enabled){
+		bio_for_each_bvec_hit(bv, bio, iter) {
 
-		if (nsegs < max_segs &&
-		    sectors + (bv.bv_len >> 9) <= max_sectors &&
-		    bv.bv_offset + bv.bv_len <= PAGE_SIZE) {
-			nsegs++;
-			sectors += bv.bv_len >> 9;
-		} else if (bvec_split_segs(q, &bv, &nsegs, &sectors, max_segs,
-					 max_sectors)) {
-			goto split;
+			//zhengxd: max_sectors: 1024, max_segs =127(==/sys/block/nvme*/queue/max_segments)
+			if ( (nsegs < max_segs) && (sectors + (bv.bv_len >> 9) <= max_sectors)) {
+				nsegs++;
+				sectors += bv.bv_len >> 9;
+			} else {
+				printk("----bio segments error: bio nsegs is %d, sectors is %d-----\n", nsegs, sectors);
+				printk("----bio segments error: bio max nsegs is %d, max sectors is %d-----\n", max_segs, max_sectors);
+			}
 		}
+	} else {
+		bio_for_each_bvec(bv, bio, iter) {
+			/*
+			* If the queue doesn't support SG gaps and adding this
+			* offset would create a gap, disallow it.
+			*/
+			if (bvprvp && bvec_gap_to_prev(q, bvprvp, bv.bv_offset))
+				goto split;
+			if (nsegs < max_segs &&
+				sectors + (bv.bv_len >> 9) <= max_sectors &&
+				bv.bv_offset + bv.bv_len <= PAGE_SIZE) {
 
-		bvprv = bv;
-		bvprvp = &bvprv;
+				nsegs++;
+				sectors += bv.bv_len >> 9;
+			} else if (bvec_split_segs(q, &bv, &nsegs, &sectors, max_segs,
+						max_sectors)) {
+				goto split;
+			}
+
+			bvprv = bv;
+			bvprvp = &bvprv;
+		}
 	}
 
 	*segs = nsegs;
@@ -493,27 +507,44 @@ static int __blk_bios_map_sg(struct request_queue *q, struct bio *bio,
 	int nsegs = 0;
 	bool new_bio = false;
 
-	for_each_bio(bio) {
-		bio_for_each_bvec(bvec, bio, iter) {
-			/*
-			 * Only try to merge bvecs from two bios given we
-			 * have done bio internal merge when adding pages
-			 * to bio
-			 */
-			if (new_bio &&
-			    __blk_segment_map_sg_merge(q, &bvec, &bvprv, sg))
-				goto next_bvec;
-
-			if (bvec.bv_offset + bvec.bv_len <= PAGE_SIZE)
-				nsegs += __blk_bvec_map_sg(bvec, sglist, sg);
-			else
-				nsegs += blk_bvec_map_sg(q, &bvec, sglist, sg);
- next_bvec:
-			new_bio = false;
+	if(bio->hit_enabled){
+		for_each_bio(bio) {
+			bio_for_each_bvec_hit(bvec, bio, iter) {
+	
+				if (bvec.bv_offset + bvec.bv_len <= PAGE_SIZE){
+					nsegs += __blk_bvec_map_sg(bvec, sglist, sg);
+					// printk("----sgl map single:  sglist length is %d, offset is %d----\n",(*sg)->length,(*sg)->offset);
+				} else{
+					printk("----sgl map single Error:  sglist length is %d, offset is %d----\n",(*sg)->length,(*sg)->offset);
+					printk("----sgl map single Error:  bvec length is %d, bvec offset is %d----\n",bvec.bv_len,bvec.bv_offset);
+					nsegs = 0;
+					break; 
+				}
+			}
 		}
-		if (likely(bio->bi_iter.bi_size)) {
-			bvprv = bvec;
-			new_bio = true;
+	} else {
+		for_each_bio(bio) {
+			bio_for_each_bvec(bvec, bio, iter) {
+				/*
+				* Only try to merge bvecs from two bios given we
+				* have done bio internal merge when adding pages
+				* to bio
+				*/
+				if (new_bio &&
+					__blk_segment_map_sg_merge(q, &bvec, &bvprv, sg))
+					goto next_bvec;
+
+				if (bvec.bv_offset + bvec.bv_len <= PAGE_SIZE)
+					nsegs += __blk_bvec_map_sg(bvec, sglist, sg);
+				else
+					nsegs += blk_bvec_map_sg(q, &bvec, sglist, sg);
+	next_bvec:
+				new_bio = false;
+			}
+			if (likely(bio->bi_iter.bi_size)) {
+				bvprv = bvec;
+				new_bio = true;
+			}
 		}
 	}
 

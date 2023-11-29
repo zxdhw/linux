@@ -5,6 +5,7 @@
 #ifndef __LINUX_FILTER_H__
 #define __LINUX_FILTER_H__
 
+#include "linux/types.h"
 #include <stdarg.h>
 
 #include <linux/atomic.h>

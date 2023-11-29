@@ -86,6 +86,99 @@ static int __blk_mq_get_tag(struct blk_mq_alloc_data *data,
 		return __sbitmap_queue_get(bt);
 }
 
+unsigned int blk_mq_get_tag_hit(struct blk_mq_alloc_data *data)
+{
+	struct blk_mq_tags *tags = blk_mq_tags_from_data(data);
+	struct sbitmap_queue *bt;
+	struct sbq_wait_state *ws;
+	DEFINE_SBQ_WAIT(wait);
+	unsigned int tag_offset;
+	int tag;
+
+	if (data->flags & BLK_MQ_REQ_RESERVED) {
+		if (unlikely(!tags->nr_reserved_tags)) {
+			WARN_ON_ONCE(1);
+			return BLK_MQ_NO_TAG;
+		}
+		bt = tags->breserved_tags;
+		tag_offset = 0;
+	} else {
+		bt = tags->bitmap_tags;
+		tag_offset = tags->nr_reserved_tags;
+	}
+
+	tag = __blk_mq_get_tag(data, bt);
+	if (tag != BLK_MQ_NO_TAG)
+		goto found_tag;
+
+	if (data->flags & BLK_MQ_REQ_NOWAIT)
+		return BLK_MQ_NO_TAG;
+
+	return BLK_MQ_NO_TAG;
+	// ws = bt_wait_ptr(bt, data->hctx);
+	// do {
+	// 	struct sbitmap_queue *bt_prev;
+
+	// 	/*
+	// 	 * We're out of tags on this hardware queue, kick any
+	// 	 * pending IO submits before going to sleep waiting for
+	// 	 * some to complete.
+	// 	 */
+	// 	blk_mq_run_hw_queue(data->hctx, false);
+
+	// 	/*
+	// 	 * Retry tag allocation after running the hardware queue,
+	// 	 * as running the queue may also have found completions.
+	// 	 */
+	// 	tag = __blk_mq_get_tag(data, bt);
+	// 	if (tag != BLK_MQ_NO_TAG)
+	// 		break;
+
+	// 	sbitmap_prepare_to_wait(bt, ws, &wait, TASK_UNINTERRUPTIBLE);
+
+	// 	tag = __blk_mq_get_tag(data, bt);
+	// 	if (tag != BLK_MQ_NO_TAG)
+	// 		break;
+		
+	// 	bt_prev = bt;
+	// 	io_schedule();
+
+	// 	sbitmap_finish_wait(bt, ws, &wait);
+
+	// 	data->ctx = blk_mq_get_ctx(data->q);
+	// 	data->hctx = blk_mq_map_queue(data->q, data->cmd_flags,
+	// 					data->ctx);
+	// 	tags = blk_mq_tags_from_data(data);
+	// 	if (data->flags & BLK_MQ_REQ_RESERVED)
+	// 		bt = tags->breserved_tags;
+	// 	else
+	// 		bt = tags->bitmap_tags;
+
+	// 	/*
+	// 	 * If destination hw queue is changed, fake wake up on
+	// 	 * previous queue for compensating the wake up miss, so
+	// 	 * other allocations on previous queue won't be starved.
+	// 	 */
+	// 	if (bt != bt_prev)
+	// 		sbitmap_queue_wake_up(bt_prev);
+
+	// 	ws = bt_wait_ptr(bt, data->hctx);
+	// } while (1);
+
+	// sbitmap_finish_wait(bt, ws, &wait);
+
+found_tag:
+	/*
+	 * Give up this allocation if the hctx is inactive.  The caller will
+	 * retry on an active hctx.
+	 */
+	if (unlikely(test_bit(BLK_MQ_S_INACTIVE, &data->hctx->state))) {
+		blk_mq_put_tag(tags, data->ctx, tag + tag_offset);
+		return BLK_MQ_NO_TAG;
+	}
+	return tag + tag_offset;
+}
+
 unsigned int blk_mq_get_tag(struct blk_mq_alloc_data *data)
 {
 	struct blk_mq_tags *tags = blk_mq_tags_from_data(data);

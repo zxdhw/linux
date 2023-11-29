@@ -19,6 +19,7 @@
  *	(jj@sunsite.ms.mff.cuni.cz)
  */
 
+#include "linux/ktime.h"
 #include <linux/time.h>
 #include <linux/fs.h>
 #include <linux/iomap.h>
@@ -35,6 +36,10 @@
 #include "xattr.h"
 #include "acl.h"
 #include "truncate.h"
+
+extern atomic_long_t file_read_iter_time;
+extern atomic_long_t file_read_iter_count;
+extern ktime_t fs_start;
 
 static bool ext4_dio_supported(struct inode *inode)
 {
@@ -78,6 +83,7 @@ static ssize_t ext4_dio_read_iter(struct kiocb *iocb, struct iov_iter *to)
 	inode_unlock_shared(inode);
 
 	file_accessed(iocb->ki_filp);
+	
 	return ret;
 }
 
@@ -110,8 +116,10 @@ static ssize_t ext4_dax_read_iter(struct kiocb *iocb, struct iov_iter *to)
 }
 #endif
 
+// zhengxd: ext4 entry
 static ssize_t ext4_file_read_iter(struct kiocb *iocb, struct iov_iter *to)
 {
+
 	struct inode *inode = file_inode(iocb->ki_filp);
 
 	if (unlikely(ext4_forced_shutdown(EXT4_SB(inode->i_sb))))

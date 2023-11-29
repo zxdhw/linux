@@ -65,6 +65,9 @@ struct bvec_iter_all {
 	min((iter).bi_size,					\
 	    __bvec_iter_bvec((bvec), (iter))->bv_len - (iter).bi_bvec_done)
 
+#define mp_bvec_iter_len_hit(bvec, iter)				\
+	(__bvec_iter_bvec((bvec), (iter))->bv_len - (iter).bi_bvec_done)
+
 #define mp_bvec_iter_offset(bvec, iter)				\
 	(__bvec_iter_bvec((bvec), (iter))->bv_offset + (iter).bi_bvec_done)
 
@@ -75,6 +78,12 @@ struct bvec_iter_all {
 ((struct bio_vec) {						\
 	.bv_page	= mp_bvec_iter_page((bvec), (iter)),	\
 	.bv_len		= mp_bvec_iter_len((bvec), (iter)),	\
+	.bv_offset	= mp_bvec_iter_offset((bvec), (iter)),	\
+})
+#define mp_bvec_iter_bvec_hit(bvec, iter)				\
+((struct bio_vec) {						\
+	.bv_page	= mp_bvec_iter_page((bvec), (iter)),	\
+	.bv_len		= mp_bvec_iter_len_hit((bvec), (iter)),	\
 	.bv_offset	= mp_bvec_iter_offset((bvec), (iter)),	\
 })
 

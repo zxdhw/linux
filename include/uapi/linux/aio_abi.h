@@ -90,12 +90,14 @@ struct iocb {
 	__u32	aio_fildes;
 
 	__u64	aio_buf;
+	// zhengxd: buffer size
 	__u64	aio_nbytes;
 	__s64	aio_offset;
 
 	/* extra parameters */
-	__u64	aio_reserved2;	/* TODO: use this for a (struct sigevent *) */
-
+	// __u64	aio_reserved2;	/* TODO: use this for a (struct sigevent *) */
+	/*zhengxd: use reserved2 for data size */
+	__u64	aio_dsize;
 	/* flags for the "struct iocb" */
 	__u32	aio_flags;
 
@@ -105,6 +107,13 @@ struct iocb {
 	 */
 	__u32	aio_resfd;
 }; /* 64 bytes */
+
+#define HIT_MAX	126
+struct hitchhiker {
+	__s32 max;
+	__s32 in_use;
+	__u64 addr[127];
+};
 
 #undef IFBIG
 #undef IFLITTLE

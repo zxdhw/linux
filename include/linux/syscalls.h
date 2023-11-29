@@ -9,6 +9,7 @@
 #ifndef _LINUX_SYSCALLS_H
 #define _LINUX_SYSCALLS_H
 
+#include "linux/fs.h"
 struct __aio_sigset;
 struct epoll_event;
 struct iattr;
@@ -69,6 +70,8 @@ struct io_uring_params;
 struct clone_args;
 struct open_how;
 struct mount_attr;
+struct hit_stats;
+struct hitchhiker;
 
 #include <linux/types.h>
 #include <linux/aio_abi.h>
@@ -314,6 +317,8 @@ asmlinkage long sys_io_setup(unsigned nr_reqs, aio_context_t __user *ctx);
 asmlinkage long sys_io_destroy(aio_context_t ctx);
 asmlinkage long sys_io_submit(aio_context_t, long,
 			struct iocb __user * __user *);
+asmlinkage long sys_io_submit_hit(aio_context_t, long, struct iocb __user * __user *,
+									char __user * __user *);
 asmlinkage long sys_io_cancel(aio_context_t ctx_id, struct iocb __user *iocb,
 			      struct io_event __user *result);
 asmlinkage long sys_io_getevents(aio_context_t ctx_id,
@@ -1363,6 +1368,8 @@ long ksys_old_shmctl(int shmid, int cmd, struct shmid_ds __user *buf);
 long compat_ksys_semtimedop(int semid, struct sembuf __user *tsems,
 			    unsigned int nsops,
 			    const struct old_timespec32 __user *timeout);
+
+asmlinkage long sys_print_hit_stats(struct hit_stats __user *buf);
 
 int __sys_getsockopt(int fd, int level, int optname, char __user *optval,
 		int __user *optlen);

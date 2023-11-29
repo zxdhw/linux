@@ -1950,6 +1950,198 @@ SYSCALL_DEFINE3(io_submit, aio_context_t, ctx_id, long, nr,
 	return i ? i : ret;
 }
 
+static int aio_read_xrp(struct kiocb *req, const struct iocb *iocb,
+			bool vectored, bool compat, unsigned int bpf_fd, char __user *scratch_buf)
+{
+	struct iovec inline_vecs[UIO_FASTIOV], *iovec = inline_vecs;
+	struct iov_iter iter;
+	struct file *file;
+	int ret;
+
+	req->xrp_scratch_buf = scratch_buf;
+	req->xrp_bpf_fd = bpf_fd;
+	req->xrp_enabled = true;
+
+	ret = aio_prep_rw(req, iocb);
+	if (ret)
+		return ret;
+	file = req->ki_filp;
+	if (unlikely(!(file->f_mode & FMODE_READ)))
+		return -EBADF;
+	ret = -EINVAL;
+	if (unlikely(!file->f_op->read_iter))
+		return -EINVAL;
+
+	ret = aio_setup_rw(READ, iocb, &iovec, vectored, compat, &iter);
+	if (ret < 0)
+		return ret;
+	ret = rw_verify_area(READ, file, &req->ki_pos, iov_iter_count(&iter));
+	if (!ret)
+		aio_rw_done(req, call_read_iter(file, req, &iter));
+	kfree(iovec);
+	return ret;
+}
+
+static int __io_submit_xrp_one(struct kioctx *ctx, const struct iocb *iocb,
+			   struct iocb __user *user_iocb, struct aio_kiocb *req,
+			   bool compat, unsigned int bpf_fd, char __user *scratch_buf)
+{
+	req->ki_filp = fget(iocb->aio_fildes);
+	if (unlikely(!req->ki_filp))
+		return -EBADF;
+
+	if (iocb->aio_flags & IOCB_FLAG_RESFD) {
+		struct eventfd_ctx *eventfd;
+		/*
+		 * If the IOCB_FLAG_RESFD flag of aio_flags is set, get an
+		 * instance of the file* now. The file descriptor must be
+		 * an eventfd() fd, and will be signaled for each completed
+		 * event using the eventfd_signal() function.
+		 */
+		eventfd = eventfd_ctx_fdget(iocb->aio_resfd);
+		if (IS_ERR(eventfd))
+			return PTR_ERR(eventfd);
+
+		req->ki_eventfd = eventfd;
+	}
+
+	if (unlikely(put_user(KIOCB_KEY, &user_iocb->aio_key))) {
+		pr_debug("EFAULT: aio_key\n");
+		return -EFAULT;
+	}
+
+	req->ki_res.obj = (u64)(unsigned long)user_iocb;
+	req->ki_res.data = iocb->aio_data;
+	req->ki_res.res = 0;
+	req->ki_res.res2 = 0;
+
+
+	switch (iocb->aio_lio_opcode) {
+	case IOCB_CMD_PREAD:
+		return aio_read_xrp(&req->rw, iocb, false, compat, bpf_fd, scratch_buf);
+	case IOCB_CMD_PWRITE:
+		return aio_write(&req->rw, iocb, false, compat);
+	case IOCB_CMD_PREADV:
+		return aio_read(&req->rw, iocb, true, compat);
+	case IOCB_CMD_PWRITEV:
+		return aio_write(&req->rw, iocb, true, compat);
+	case IOCB_CMD_FSYNC:
+		return aio_fsync(&req->fsync, iocb, false);
+	case IOCB_CMD_FDSYNC:
+		return aio_fsync(&req->fsync, iocb, true);
+	case IOCB_CMD_POLL:
+		return aio_poll(req, iocb);
+	default:
+		pr_debug("invalid aio operation %d\n", iocb->aio_lio_opcode);
+		return -EINVAL;
+	}
+}
+
+/* io_submit_xrp_one
+*/
+static int io_submit_xrp_one(struct kioctx *ctx, struct iocb __user *user_iocb,
+			 bool compat, unsigned int bpf_fd, char __user * scratch_buf)
+{
+	struct aio_kiocb *req;
+	struct iocb iocb;
+	int err;
+
+	if (unlikely(copy_from_user(&iocb, user_iocb, sizeof(iocb))))
+		return -EFAULT;
+
+	/* enforce forwards compatibility on users */
+	if (unlikely(iocb.aio_reserved2)) {
+		pr_debug("EINVAL: reserve field set\n");
+		return -EINVAL;
+	}
+
+	/* prevent overflows */
+	if (unlikely(
+	    (iocb.aio_buf != (unsigned long)iocb.aio_buf) ||
+	    (iocb.aio_nbytes != (size_t)iocb.aio_nbytes) ||
+	    ((ssize_t)iocb.aio_nbytes < 0)
+	   )) {
+		pr_debug("EINVAL: overflow check\n");
+		return -EINVAL;
+	}
+
+	req = aio_get_req(ctx);
+	if (unlikely(!req))
+		return -EAGAIN;
+
+	err = __io_submit_xrp_one(ctx, &iocb, user_iocb, req, compat, bpf_fd, scratch_buf);
+
+	/* Done with the synchronous reference */
+	iocb_put(req);
+
+	/*
+	 * If err is 0, we'd either done aio_complete() ourselves or have
+	 * arranged for that to be done asynchronously.  Anything non-zero
+	 * means that we need to destroy req ourselves.
+	 */
+	if (unlikely(err)) {
+		iocb_destroy(req);
+		put_reqs_available(ctx, 1);
+	}
+	return err;
+}
+
+/* sys_io_submit_ebpf:
+ *	Queue the nr iocbs pointed to by iocbpp for processing.  Returns
+ *	the number of iocbs queued.  May return -EINVAL if the aio_context
+ *	specified by ctx_id is invalid, if nr is < 0, if the iocb at
+ *	*iocbpp[0] is not properly initialized, if the operation specified
+ *	is invalid for the file descriptor in the iocb.  May fail with
+ *	-EFAULT if any of the data structures point to invalid data.  May
+ *	fail with -EBADF if the file descriptor specified in the first
+ *	iocb is invalid.  May fail with -EAGAIN if insufficient resources
+ *	are available to queue any iocbs.  Will return 0 if nr is 0.  Will
+ *	fail with -ENOSYS if not implemented.
+ *  add:
+ *  @bpf_fd: bpf prog 
+ *  @scratch_bufs: every io has a scratch_buf 
+ */
+SYSCALL_DEFINE5(io_submit_xrp, aio_context_t, ctx_id, long, nr, struct iocb __user * __user *, iocbpp,
+					unsigned int, bpf_fd, char __user * __user *, scratch_bufs)
+{
+	struct kioctx *ctx;
+	long ret = 0;
+	int i = 0;
+	struct blk_plug plug;
+
+	if (unlikely(nr < 0))
+		return -EINVAL;
+
+	ctx = lookup_ioctx(ctx_id);
+	if (unlikely(!ctx)) {
+		pr_debug("EINVAL: invalid context id\n");
+		return -EINVAL;
+	}
+
+	if (nr > ctx->nr_events)
+		nr = ctx->nr_events;
+
+	if (nr > AIO_PLUG_THRESHOLD)
+		blk_start_plug(&plug);
+	for (i = 0; i < nr; i++) {
+		char __user * scratch_buf = scratch_bufs + i;
+		struct iocb __user *user_iocb;
+		if (unlikely(get_user(user_iocb, iocbpp + i))) {
+			ret = -EFAULT;
+			break;
+		}
+
+		ret = io_submit_xrp_one(ctx, user_iocb, false, bpf_fd, scratch_buf);
+		if (ret)
+			break;
+	}
+	if (nr > AIO_PLUG_THRESHOLD)
+		blk_finish_plug(&plug);
+
+	percpu_ref_put(&ctx->users);
+	return i ? i : ret;
+}
+
 #ifdef CONFIG_COMPAT
 COMPAT_SYSCALL_DEFINE3(io_submit, compat_aio_context_t, ctx_id,
 		       int, nr, compat_uptr_t __user *, iocbpp)

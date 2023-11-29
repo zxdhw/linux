@@ -315,6 +315,8 @@ asmlinkage long sys_io_setup(unsigned nr_reqs, aio_context_t __user *ctx);
 asmlinkage long sys_io_destroy(aio_context_t ctx);
 asmlinkage long sys_io_submit(aio_context_t, long,
 			struct iocb __user * __user *);
+asmlinkage long sys_io_submit_xrp(aio_context_t, long, struct iocb __user * __user *,
+										unsigned int, char __user * __user *);
 asmlinkage long sys_io_cancel(aio_context_t ctx_id, struct iocb __user *iocb,
 			      struct io_event __user *result);
 asmlinkage long sys_io_getevents(aio_context_t ctx_id,

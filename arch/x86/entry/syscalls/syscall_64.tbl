@@ -368,6 +368,7 @@
 444	common	print_xrp_stats		sys_print_xrp_stats
 445	common	read_xrp	        sys_read_xrp
 446	common	test_xrp		sys_test_xrp
+447	64	io_submit_xrp		sys_io_submit_xrp
 
 #
 # Due to a historical design error, certain syscalls are numbered differently

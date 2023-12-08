@@ -1085,14 +1085,14 @@ static inline void nvme_handle_cqe(struct nvme_queue *nvmeq, u16 idx)
 			atomic_long_inc(&xrp_extent_lookup_count);
 			if (!mapping.exist || mapping.len < data_len || mapping.address & 0x1ff) {
 				printk("nvme_handle_cqe: failed to retrieve address mapping during verification with logical address 0x%llx, dump context\n", file_offset);
-				ebpf_dump_page((uint8_t *) ebpf_context.scratch, 4096);
+				ebpf_dump_page((uint8_t *) ebpf_context.scratch, 8192);
 				if (!nvme_try_complete_req(req, cqe->status, cqe->result))
 					nvme_pci_complete_rq(req);
 				return;
 			} else if (mapping.version != req->bio->xrp_extent_version) {
 				printk("nvme_handle_cqe: version mismatch with logical address 0x%llx (expected %lld, got %lld), dump context\n",
 				       file_offset, req->bio->xrp_extent_version, mapping.version);
-				ebpf_dump_page((uint8_t *) ebpf_context.scratch, 4096);
+				ebpf_dump_page((uint8_t *) ebpf_context.scratch, 8192);
 				if (!nvme_try_complete_req(req, cqe->status, cqe->result))
 					nvme_pci_complete_rq(req);
 				return;
@@ -1116,7 +1116,7 @@ static inline void nvme_handle_cqe(struct nvme_queue *nvmeq, u16 idx)
 		if (ebpf_return != 0) {
 			/* error happens when calling ebpf function. end the request and return */
 			printk("nvme_handle_cqe: ebpf failed, dump context\n");
-			ebpf_dump_page((uint8_t *) ebpf_context.scratch, 4096);
+			ebpf_dump_page((uint8_t *) ebpf_context.scratch, 8192);
 			if (!nvme_try_complete_req(req, cqe->status, cqe->result))
 				nvme_pci_complete_rq(req);
 			return;
@@ -1143,7 +1143,7 @@ static inline void nvme_handle_cqe(struct nvme_queue *nvmeq, u16 idx)
 			atomic_long_inc(&xrp_extent_lookup_count);
 			if (!mapping.exist || mapping.len < data_len || mapping.address & 0x1ff) {
 				printk("nvme_handle_cqe: failed to retrieve address mapping with logical address 0x%llx, dump context\n", file_offset);
-				ebpf_dump_page((uint8_t *) ebpf_context.scratch, 4096);
+				ebpf_dump_page((uint8_t *) ebpf_context.scratch, 8192);
 				if (!nvme_try_complete_req(req, cqe->status, cqe->result))
 					nvme_pci_complete_rq(req);
 				return;

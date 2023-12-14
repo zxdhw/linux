@@ -2124,7 +2124,11 @@ SYSCALL_DEFINE5(io_submit_xrp, aio_context_t, ctx_id, long, nr, struct iocb __us
 	if (nr > AIO_PLUG_THRESHOLD)
 		blk_start_plug(&plug);
 	for (i = 0; i < nr; i++) {
-		char __user * scratch_buf = scratch_bufs + i;
+		char __user * scratch_buf;
+		if (unlikely(get_user(scratch_buf, scratch_bufs + i))) {
+			ret = -EFAULT;
+			break;
+		}
 		struct iocb __user *user_iocb;
 		if (unlikely(get_user(user_iocb, iocbpp + i))) {
 			ret = -EFAULT;

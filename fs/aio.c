@@ -1522,7 +1522,7 @@ static int aio_read(struct kiocb *req, const struct iocb *iocb,
 	struct iov_iter iter;
 	struct file *file;
 	int ret;
-
+// zhengxd： 根据iocb 对req进行赋值
 	ret = aio_prep_rw(req, iocb);
 	if (ret)
 		return ret;
@@ -1532,12 +1532,14 @@ static int aio_read(struct kiocb *req, const struct iocb *iocb,
 	ret = -EINVAL;
 	if (unlikely(!file->f_op->read_iter))
 		return -EINVAL;
-
+// zhengxd： 检查用户态读写buf信息，是否可以访问，并将其传递给iov_iter
 	ret = aio_setup_rw(READ, iocb, &iovec, vectored, compat, &iter);
 	if (ret < 0)
 		return ret;
+//zhengxd： 安全检查
 	ret = rw_verify_area(READ, file, &req->ki_pos, iov_iter_count(&iter));
 	if (!ret)
+		// zhengxd： 进入文件系统 ext4_file_read_iter()
 		aio_rw_done(req, call_read_iter(file, req, &iter));
 	kfree(iovec);
 	return ret;
@@ -1800,6 +1802,7 @@ static int __io_submit_one(struct kioctx *ctx, const struct iocb *iocb,
 			   struct iocb __user *user_iocb, struct aio_kiocb *req,
 			   bool compat)
 {
+	//zhengxd ： 通过文件fd，获取struct file 指针
 	req->ki_filp = fget(iocb->aio_fildes);
 	if (unlikely(!req->ki_filp))
 		return -EBADF;
@@ -1828,7 +1831,7 @@ static int __io_submit_one(struct kioctx *ctx, const struct iocb *iocb,
 	req->ki_res.data = iocb->aio_data;
 	req->ki_res.res = 0;
 	req->ki_res.res2 = 0;
-
+// 根据用户态指定的aio opcode，进行io的处理
 	switch (iocb->aio_lio_opcode) {
 	case IOCB_CMD_PREAD:
 		return aio_read(&req->rw, iocb, false, compat);
@@ -1856,7 +1859,7 @@ static int io_submit_one(struct kioctx *ctx, struct iocb __user *user_iocb,
 	struct aio_kiocb *req;
 	struct iocb iocb;
 	int err;
-
+// zhengxd： 将iocb 拷贝到 内核态
 	if (unlikely(copy_from_user(&iocb, user_iocb, sizeof(iocb))))
 		return -EFAULT;
 
@@ -1875,7 +1878,7 @@ static int io_submit_one(struct kioctx *ctx, struct iocb __user *user_iocb,
 		pr_debug("EINVAL: overflow check\n");
 		return -EINVAL;
 	}
-
+// 分配一个req，并初始化相关信息
 	req = aio_get_req(ctx);
 	if (unlikely(!req))
 		return -EAGAIN;
@@ -1909,6 +1912,7 @@ static int io_submit_one(struct kioctx *ctx, struct iocb __user *user_iocb,
  *	are available to queue any iocbs.  Will return 0 if nr is 0.  Will
  *	fail with -ENOSYS if not implemented.
  */
+// zhengxd: aio 入口，ctxid（用来查找ctx，也就是io_setup时的注册信息,队列长度）, 数量，用户态iocb指针
 SYSCALL_DEFINE3(io_submit, aio_context_t, ctx_id, long, nr,
 		struct iocb __user * __user *, iocbpp)
 {
@@ -1916,10 +1920,10 @@ SYSCALL_DEFINE3(io_submit, aio_context_t, ctx_id, long, nr,
 	long ret = 0;
 	int i = 0;
 	struct blk_plug plug;
-
+// zhengxd： unlikey通知编译器 此选项大概率不成立，优化编译
 	if (unlikely(nr < 0))
 		return -EINVAL;
-
+//zhengxd： 根据ctxid获取 ctx上下文信息
 	ctx = lookup_ioctx(ctx_id);
 	if (unlikely(!ctx)) {
 		pr_debug("EINVAL: invalid context id\n");
@@ -1928,21 +1932,22 @@ SYSCALL_DEFINE3(io_submit, aio_context_t, ctx_id, long, nr,
 
 	if (nr > ctx->nr_events)
 		nr = ctx->nr_events;
-
+// zhengxd： nr > 2时开启plug， plug似乎是层级嵌套的。
 	if (nr > AIO_PLUG_THRESHOLD)
 		blk_start_plug(&plug);
 	for (i = 0; i < nr; i++) {
 		struct iocb __user *user_iocb;
-
+// 挨个遍历iocb， 并提交io
 		if (unlikely(get_user(user_iocb, iocbpp + i))) {
 			ret = -EFAULT;
 			break;
 		}
-
+// 每次提交一个io
 		ret = io_submit_one(ctx, user_iocb, false);
 		if (ret)
 			break;
 	}
+// 停止plug
 	if (nr > AIO_PLUG_THRESHOLD)
 		blk_finish_plug(&plug);
 

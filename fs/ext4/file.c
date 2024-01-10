@@ -48,7 +48,7 @@ static bool ext4_dio_supported(struct inode *inode)
 		return false;
 	return true;
 }
-
+// zhengxd：ext4_file_read_iter -> ext4_dio_read_iter
 static ssize_t ext4_dio_read_iter(struct kiocb *iocb, struct iov_iter *to)
 {
 	ssize_t ret;
@@ -73,7 +73,8 @@ static ssize_t ext4_dio_read_iter(struct kiocb *iocb, struct iov_iter *to)
 		iocb->ki_flags &= ~IOCB_DIRECT;
 		return generic_file_read_iter(iocb, to);
 	}
-
+// zhengxd: iomap, 获取文件在page cache 和 磁盘上的分布。ops包括：iomap_begin和iomap_end
+// zhengxd: iomap_begin: 初始化iomap信息，具体可查看iomap结构体获取磁盘分布和映射信息， iobegin_end：清理映射。
 	ret = iomap_dio_rw(iocb, to, &ext4_iomap_ops, NULL, 0);
 	inode_unlock_shared(inode);
 
@@ -124,9 +125,10 @@ static ssize_t ext4_file_read_iter(struct kiocb *iocb, struct iov_iter *to)
 	if (IS_DAX(inode))
 		return ext4_dax_read_iter(iocb, to);
 #endif
+// zhengxd： direct io 路径
 	if (iocb->ki_flags & IOCB_DIRECT)
 		return ext4_dio_read_iter(iocb, to);
-
+// zhengxd：buffer io 路径
 	return generic_file_read_iter(iocb, to);
 }
 

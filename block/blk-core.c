@@ -1064,6 +1064,7 @@ EXPORT_SYMBOL(submit_bio_noacct);
  * in @bio.  The bio must NOT be touched by thecaller until ->bi_end_io() has
  * been called.
  */
+// zhengxd: 块层入口
 blk_qc_t submit_bio(struct bio *bio)
 {
 	if (blkcg_punt_bio_submit(bio))

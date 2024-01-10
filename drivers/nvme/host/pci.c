@@ -490,6 +490,7 @@ static inline void nvme_write_sq_db(struct nvme_queue *nvmeq, bool write_sq)
 
 	if (nvme_dbbuf_update_and_check_event(nvmeq->sq_tail,
 			nvmeq->dbbuf_sq_db, nvmeq->dbbuf_sq_ei))
+		// zhengxd: writeb,writew,writel: byte(8),word(16),long word(32);
 		writel(nvmeq->sq_tail, nvmeq->q_db);
 	nvmeq->last_sq_tail = nvmeq->sq_tail;
 }
@@ -912,6 +913,7 @@ static blk_status_t nvme_map_metadata(struct nvme_dev *dev, struct request *req,
 /*
  * NOTE: ns is NULL when called on the admin queue.
  */
+// zhengxd: driver 入口
 static blk_status_t nvme_queue_rq(struct blk_mq_hw_ctx *hctx,
 			 const struct blk_mq_queue_data *bd)
 {

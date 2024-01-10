@@ -235,7 +235,7 @@ iomap_dio_bio_opflags(struct iomap_dio *dio, struct iomap *iomap, bool use_fua)
 
 	return opflags;
 }
-
+// zhengxd: 根据dio 分配bio
 static loff_t
 iomap_dio_bio_actor(struct inode *inode, loff_t pos, loff_t length,
 		struct iomap_dio *dio, struct iomap *iomap)
@@ -302,7 +302,7 @@ iomap_dio_bio_actor(struct inode *inode, loff_t pos, loff_t length,
 	 * operation.
 	 */
 	bio_opf = iomap_dio_bio_opflags(dio, iomap, use_fua);
-
+//zhengxd: 根据buf的大小，分配
 	nr_pages = bio_iov_vecs_to_alloc(dio->submit.iter, BIO_MAX_VECS);
 	do {
 		size_t n;
@@ -435,14 +435,17 @@ iomap_dio_actor(struct inode *inode, loff_t pos, loff_t length,
 	struct iomap_dio *dio = data;
 
 	switch (iomap->type) {
+	// zhengxd： 空洞，磁盘上没有未该数据分配地址
 	case IOMAP_HOLE:
 		if (WARN_ON_ONCE(dio->flags & IOMAP_DIO_WRITE))
 			return -EIO;
 		return iomap_dio_hole_actor(length, dio);
+	// zhengxd： 磁盘上区域没有写入数据
 	case IOMAP_UNWRITTEN:
 		if (!(dio->flags & IOMAP_DIO_WRITE))
 			return iomap_dio_hole_actor(length, dio);
 		return iomap_dio_bio_actor(inode, pos, length, dio, iomap);
+	//zhengxd： 磁盘和内存已经建立映射关系
 	case IOMAP_MAPPED:
 		return iomap_dio_bio_actor(inode, pos, length, dio, iomap);
 	case IOMAP_INLINE:
@@ -475,6 +478,7 @@ iomap_dio_actor(struct inode *inode, loff_t pos, loff_t length,
  * Returns -ENOTBLK In case of a page invalidation invalidation failure for
  * writes.  The callers needs to fall back to buffered I/O in this case.
  */
+// zhengxd: 初始化dio结构体, iomap的目的是将iocb中的逻辑地址 file offset 转换为 disk offset
 struct iomap_dio *
 __iomap_dio_rw(struct kiocb *iocb, struct iov_iter *iter,
 		const struct iomap_ops *ops, const struct iomap_dio_ops *dops,
@@ -501,11 +505,12 @@ __iomap_dio_rw(struct kiocb *iocb, struct iov_iter *iter,
 	dio->iocb = iocb;
 	atomic_set(&dio->ref, 1);
 	dio->size = 0;
+	// zhengxd： 文件的大小，用来进行安全检查，访问越界
 	dio->i_size = i_size_read(inode);
 	dio->dops = dops;
 	dio->error = 0;
 	dio->flags = 0;
-
+// zhengxd： iter包括用户态buf和长度信息
 	dio->submit.iter = iter;
 	dio->submit.waiter = current;
 	dio->submit.cookie = BLK_QC_T_NONE;
@@ -549,7 +554,7 @@ __iomap_dio_rw(struct kiocb *iocb, struct iov_iter *iter,
 			goto out_free_dio;
 		iomap_flags |= IOMAP_OVERWRITE_ONLY;
 	}
-
+// zhengxd: 保证数据的已经被写回，保证一致性
 	ret = filemap_write_and_wait_range(mapping, pos, end);
 	if (ret)
 		goto out_free_dio;
@@ -575,9 +580,11 @@ __iomap_dio_rw(struct kiocb *iocb, struct iov_iter *iter,
 	}
 
 	inode_dio_begin(inode);
-
+// zhengxd: 再次开启plug
 	blk_start_plug(&plug);
+// !zhengxd: do while循环，通过iomap遍历所有连续的物理地址空间，每个连续物理空间生成一个bio
 	do {
+// zhengxd： 根据flag信息，提交dio。iomap apply 用来获取iomap信息，然后执行iomap_dio_actor
 		ret = iomap_apply(inode, pos, count, iomap_flags, ops, dio,
 				iomap_dio_actor);
 		if (ret <= 0) {
@@ -588,6 +595,7 @@ __iomap_dio_rw(struct kiocb *iocb, struct iov_iter *iter,
 			}
 			break;
 		}
+		// zhengxd：根据下发的io长度，移动pos。
 		pos += ret;
 
 		if (iov_iter_rw(iter) == READ && pos >= dio->i_size) {
@@ -659,13 +667,15 @@ out_free_dio:
 }
 EXPORT_SYMBOL_GPL(__iomap_dio_rw);
 
+// zhengxd： ext4_dio_read_iter -> iomap_dio_rw
 ssize_t
 iomap_dio_rw(struct kiocb *iocb, struct iov_iter *iter,
 		const struct iomap_ops *ops, const struct iomap_dio_ops *dops,
 		unsigned int dio_flags)
 {
 	struct iomap_dio *dio;
-
+// zhengxd： ops指对应文件系统的iomap操作，ext的begin_iomap,end_iomap; 
+// 			dops指direct io的相关操作： end_io和submit_io,对于读操作来说是NULL
 	dio = __iomap_dio_rw(iocb, iter, ops, dops, dio_flags);
 	if (IS_ERR_OR_NULL(dio))
 		return PTR_ERR_OR_ZERO(dio);

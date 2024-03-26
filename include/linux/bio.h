@@ -450,8 +450,10 @@ static inline void bio_wouldblock_error(struct bio *bio)
  */
 static inline int bio_iov_vecs_to_alloc(struct iov_iter *iter, int max_segs)
 {
+	// zhengxd： 查看iter是不是bio_vec
 	if (iov_iter_is_bvec(iter))
 		return 0;
+	//zhengxd: /linux/lib/iov_iter.c
 	return iov_iter_npages(iter, max_segs);
 }
 

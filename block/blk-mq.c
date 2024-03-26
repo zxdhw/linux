@@ -2174,11 +2174,11 @@ blk_qc_t blk_mq_submit_bio(struct bio *bio)
 
 	if (!bio_integrity_prep(bio))
 		goto queue_exit;
-
+	// zhengxd： 主要开销 进行合并，!blk_queue_nomerges(q)似乎可以通过该参数关闭
 	if (!is_flush_fua && !blk_queue_nomerges(q) &&
 	    blk_attempt_plug_merge(q, bio, nr_segs, &same_queue_rq))
 		goto queue_exit;
-
+	// zhengxd：调度合并？没有调度器应该不会进行
 	if (blk_mq_sched_bio_merge(q, bio, nr_segs))
 		goto queue_exit;
 
@@ -2187,6 +2187,7 @@ blk_qc_t blk_mq_submit_bio(struct bio *bio)
 	hipri = bio->bi_opf & REQ_HIPRI;
 
 	data.cmd_flags = bio->bi_opf;
+	//zhengxd：申请rq
 	rq = __blk_mq_alloc_request(&data);
 	if (unlikely(!rq)) {
 		rq_qos_cleanup(q, bio);
@@ -2200,9 +2201,9 @@ blk_qc_t blk_mq_submit_bio(struct bio *bio)
 	rq_qos_track(q, rq, bio);
 
 	cookie = request_to_qc_t(data.hctx, rq);
-
+	// zhengxd：将bio转换为rq
 	blk_mq_bio_to_request(rq, bio, nr_segs);
-
+	//zhengxd：加密相关
 	ret = blk_crypto_init_request(rq);
 	if (ret != BLK_STS_OK) {
 		bio->bi_status = ret;
@@ -2210,12 +2211,14 @@ blk_qc_t blk_mq_submit_bio(struct bio *bio)
 		blk_mq_free_request(rq);
 		return BLK_QC_T_NONE;
 	}
-
+	// zhengxd：开启plug
 	plug = blk_mq_plug(q, bio);
+	//zhengxd： flush请求
 	if (unlikely(is_flush_fua)) {
 		/* Bypass scheduler for flush requests */
 		blk_insert_flush(rq);
 		blk_mq_run_hw_queue(data.hctx, true);
+	//zhengxd：慢速设备，硬件队列为1
 	} else if (plug && (q->nr_hw_queues == 1 || q->mq_ops->commit_rqs ||
 				!blk_queue_nonrot(q))) {
 		/*
@@ -2240,9 +2243,11 @@ blk_qc_t blk_mq_submit_bio(struct bio *bio)
 		}
 
 		blk_add_rq_to_plug(plug, rq);
+	// zhengxd：调度器
 	} else if (q->elevator) {
 		/* Insert the request at the IO scheduler queue */
 		blk_mq_sched_insert_request(rq, false, true, true);
+	//zhengxd：开启plug，不禁止合并，blaze的方式
 	} else if (plug && !blk_queue_nomerges(q)) {
 		/*
 		 * We do limited plugging. If the bio can be merged, do that.
@@ -2266,6 +2271,7 @@ blk_qc_t blk_mq_submit_bio(struct bio *bio)
 			blk_mq_try_issue_directly(data.hctx, same_queue_rq,
 					&cookie);
 		}
+	//zhengxd：同步请求，快速设备。
 	} else if ((q->nr_hw_queues > 1 && is_sync) ||
 			!data.hctx->dispatch_busy) {
 		/*
@@ -2273,6 +2279,7 @@ blk_qc_t blk_mq_submit_bio(struct bio *bio)
 		 * to the hardware.
 		 */
 		blk_mq_try_issue_directly(data.hctx, rq, &cookie);
+	//zhengxd：默认
 	} else {
 		/* Default case. */
 		blk_mq_sched_insert_request(rq, false, true, true);

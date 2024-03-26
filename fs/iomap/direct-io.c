@@ -62,12 +62,15 @@ EXPORT_SYMBOL_GPL(iomap_dio_iopoll);
 static void iomap_dio_submit_bio(struct iomap_dio *dio, struct iomap *iomap,
 		struct bio *bio, loff_t pos)
 {
+	// zhengxd： 增加dio引用计数
 	atomic_inc(&dio->ref);
-
+	//zhengxd： 根据优先级决定是否采用poll
 	if (dio->iocb->ki_flags & IOCB_HIPRI)
 		bio_set_polled(bio, dio->iocb);
-
+	// zhengxd：获取设备队列
 	dio->submit.last_queue = bdev_get_queue(iomap->bdev);
+	//zhengxd： 如果定义了submit_io则使用，否则使用submit_bio; iomap_dio_rw使用NULL
+	// zhengxd： ret = iomap_dio_rw(iocb, to, &ext4_iomap_ops, NULL, 0); 
 	if (dio->dops && dio->dops->submit_io)
 		dio->submit.cookie = dio->dops->submit_io(
 				file_inode(dio->iocb->ki_filp),
@@ -250,7 +253,7 @@ iomap_dio_bio_actor(struct inode *inode, loff_t pos, loff_t length,
 	int nr_pages, ret = 0;
 	size_t copied = 0;
 	size_t orig_count;
-
+	// zhengxd：对齐
 	if ((pos | length | align) & ((1 << blkbits) - 1))
 		return -EINVAL;
 
@@ -302,7 +305,7 @@ iomap_dio_bio_actor(struct inode *inode, loff_t pos, loff_t length,
 	 * operation.
 	 */
 	bio_opf = iomap_dio_bio_opflags(dio, iomap, use_fua);
-//zhengxd: 根据buf的大小，分配
+//zhengxd: 根据buf的大小，分配, /linux/include/linux/bio.h
 	nr_pages = bio_iov_vecs_to_alloc(dio->submit.iter, BIO_MAX_VECS);
 	do {
 		size_t n;
@@ -313,14 +316,16 @@ iomap_dio_bio_actor(struct inode *inode, loff_t pos, loff_t length,
 		}
 
 		bio = bio_alloc(GFP_KERNEL, nr_pages);
+		//zhengxd：根据iomap获取设备信息，用于块层和驱动获取相关设备的队列
 		bio_set_dev(bio, iomap->bdev);
+		// zhengxd： 通过iomap,根据pos获取bi.sector
 		bio->bi_iter.bi_sector = iomap_sector(iomap, pos);
 		bio->bi_write_hint = dio->iocb->ki_hint;
 		bio->bi_ioprio = dio->iocb->ki_ioprio;
 		bio->bi_private = dio;
 		bio->bi_end_io = iomap_dio_bio_end_io;
 		bio->bi_opf = bio_opf;
-
+		//zhengxd：graphe：根据iter初始化bio，包括bi.size
 		ret = bio_iov_iter_get_pages(bio, dio->submit.iter);
 		if (unlikely(ret)) {
 			/*
@@ -353,7 +358,7 @@ iomap_dio_bio_actor(struct inode *inode, loff_t pos, loff_t length,
 				bio->xrp_enabled = false;
 			}
 		}
-
+		// zhengxd: graphe: bi_size
 		n = bio->bi_iter.bi_size;
 		if (dio->flags & IOMAP_DIO_WRITE) {
 			task_io_account_write(n);
@@ -361,7 +366,7 @@ iomap_dio_bio_actor(struct inode *inode, loff_t pos, loff_t length,
 			if (dio->flags & IOMAP_DIO_DIRTY)
 				bio_set_pages_dirty(bio);
 		}
-
+		// zhengxd： dio size等于读取数据大小。
 		dio->size += n;
 		copied += n;
 
@@ -486,8 +491,10 @@ __iomap_dio_rw(struct kiocb *iocb, struct iov_iter *iter,
 {
 	struct address_space *mapping = iocb->ki_filp->f_mapping;
 	struct inode *inode = file_inode(iocb->ki_filp);
+	//zhengxd：graphe：count为iter的大小
 	size_t count = iov_iter_count(iter);
 	loff_t pos = iocb->ki_pos;
+	// zhengxd: graphe：end的结果可能需要考虑
 	loff_t end = iocb->ki_pos + count - 1, ret = 0;
 	bool wait_for_completion =
 		is_sync_kiocb(iocb) || (dio_flags & IOMAP_DIO_FORCE_WAIT);
@@ -516,10 +523,11 @@ __iomap_dio_rw(struct kiocb *iocb, struct iov_iter *iter,
 	dio->submit.cookie = BLK_QC_T_NONE;
 	dio->submit.last_queue = NULL;
 
+	// zhengxd： 检查是否为read
 	if (iov_iter_rw(iter) == READ) {
 		if (pos >= dio->i_size)
 			goto out_free_dio;
-
+		// zhegnxd： 脏数据检查？
 		if (iter_is_iovec(iter))
 			dio->flags |= IOMAP_DIO_DIRTY;
 	} else {
@@ -585,6 +593,7 @@ __iomap_dio_rw(struct kiocb *iocb, struct iov_iter *iter,
 // !zhengxd: do while循环，通过iomap遍历所有连续的物理地址空间，每个连续物理空间生成一个bio
 	do {
 // zhengxd： 根据flag信息，提交dio。iomap apply 用来获取iomap信息，然后执行iomap_dio_actor
+// graphe： pos为iocb->ki_pos,count为iter大小
 		ret = iomap_apply(inode, pos, count, iomap_flags, ops, dio,
 				iomap_dio_actor);
 		if (ret <= 0) {

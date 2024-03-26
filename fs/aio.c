@@ -195,7 +195,9 @@ struct poll_iocb {
  */
 struct aio_kiocb {
 	union {
+		// zhengxd：文件信息：定义在 linux/include/linux/fs.h
 		struct file		*ki_filp;
+		// zhengxd： kiocb /home/zhengxd/linux/include/linux/fs.h
 		struct kiocb		rw;
 		struct fsync_iocb	fsync;
 		struct poll_iocb	poll;
@@ -1454,6 +1456,7 @@ static int aio_prep_rw(struct kiocb *req, const struct iocb *iocb)
 	req->ki_flags = iocb_flags(req->ki_filp);
 	if (iocb->aio_flags & IOCB_FLAG_RESFD)
 		req->ki_flags |= IOCB_EVENTFD;
+	//hint:写入的优化建议，例如调度器，顺序随机等。
 	req->ki_hint = ki_hint_validate(file_write_hint(req->ki_filp));
 	if (iocb->aio_flags & IOCB_FLAG_IOPRIO) {
 		/*
@@ -1484,14 +1487,17 @@ static ssize_t aio_setup_rw(int rw, const struct iocb *iocb,
 		struct iov_iter *iter)
 {
 	void __user *buf = (void __user *)(uintptr_t)iocb->aio_buf;
+	//zhengxd： buffer的字节数，用来初始化iov的count
 	size_t len = iocb->aio_nbytes;
-
+	//zhengxd： 单个seg，cmd为：IOCB_CMD_PREAD
 	if (!vectored) {
+	//zhengxd： linux/lib/iov_iter.c，对iter进行初始化，因为是single_range所以传入的第一个iovec的地址 *iovec
 		ssize_t ret = import_single_range(rw, buf, len, *iovec, iter);
 		*iovec = NULL;
 		return ret;
 	}
-
+	// zhengxd： 多个seg, cmd为：IOCB_CMD_PREADV， 传入iovec，UIO_FASTIOV初始创建的8个IOVEC
+	// zhengxd： question，len是字节数，为什么到这里变成segment数量了。
 	return __import_iovec(rw, buf, len, UIO_FASTIOV, iovec, iter, compat);
 }
 
@@ -1518,11 +1524,13 @@ static inline void aio_rw_done(struct kiocb *req, ssize_t ret)
 static int aio_read(struct kiocb *req, const struct iocb *iocb,
 			bool vectored, bool compat)
 {
+	// zhengxd: 默认初始化8个vec，最大1024个。不够的话通过后续指针连接
 	struct iovec inline_vecs[UIO_FASTIOV], *iovec = inline_vecs;
+	//zhengxd： iov迭代器，用来封装iovec
 	struct iov_iter iter;
 	struct file *file;
 	int ret;
-// zhengxd： 根据iocb 对req进行赋值
+	// zhengxd： 根据iocb 对req进行赋值
 	ret = aio_prep_rw(req, iocb);
 	if (ret)
 		return ret;
@@ -1532,11 +1540,11 @@ static int aio_read(struct kiocb *req, const struct iocb *iocb,
 	ret = -EINVAL;
 	if (unlikely(!file->f_op->read_iter))
 		return -EINVAL;
-// zhengxd： 检查用户态读写buf信息，是否可以访问，并将其传递给iov_iter
+	// zhengxd： 检查用户态读写buf信息，是否可以访问，并将其传递给iov_iter
 	ret = aio_setup_rw(READ, iocb, &iovec, vectored, compat, &iter);
 	if (ret < 0)
 		return ret;
-//zhengxd： 安全检查
+	//zhengxd： 安全检查: 访问是否合法，访问地址是否需要加锁
 	ret = rw_verify_area(READ, file, &req->ki_pos, iov_iter_count(&iter));
 	if (!ret)
 		// zhengxd： 进入文件系统 ext4_file_read_iter()
@@ -1831,7 +1839,7 @@ static int __io_submit_one(struct kioctx *ctx, const struct iocb *iocb,
 	req->ki_res.data = iocb->aio_data;
 	req->ki_res.res = 0;
 	req->ki_res.res2 = 0;
-// 根据用户态指定的aio opcode，进行io的处理
+// zhengxd: 根据用户态指定的aio opcode，进行io的处理
 	switch (iocb->aio_lio_opcode) {
 	case IOCB_CMD_PREAD:
 		return aio_read(&req->rw, iocb, false, compat);
@@ -1878,7 +1886,7 @@ static int io_submit_one(struct kioctx *ctx, struct iocb __user *user_iocb,
 		pr_debug("EINVAL: overflow check\n");
 		return -EINVAL;
 	}
-// 分配一个req，并初始化相关信息
+// zhengxd: 分配一个req，并初始化相关信息
 	req = aio_get_req(ctx);
 	if (unlikely(!req))
 		return -EAGAIN;

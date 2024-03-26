@@ -956,6 +956,7 @@ static blk_qc_t __submit_bio_noacct(struct bio *bio)
 	current->bio_list = bio_list_on_stack;
 
 	do {
+		//zhengxd: 根据bio的disk信息，获取相关队列。
 		struct request_queue *q = bio->bi_bdev->bd_disk->queue;
 		struct bio_list lower, same;
 
@@ -1044,7 +1045,8 @@ blk_qc_t submit_bio_noacct(struct bio *bio)
 		bio_list_add(&current->bio_list[0], bio);
 		return BLK_QC_T_NONE;
 	}
-
+	// zhengxd: 5.15版本以后，两者内部均调用__submit_bio
+	//zhengxd：设备没有定义submit_bio，则采用mq
 	if (!bio->bi_bdev->bd_disk->fops->submit_bio)
 		return __submit_bio_noacct_mq(bio);
 	return __submit_bio_noacct(bio);
@@ -1064,7 +1066,7 @@ EXPORT_SYMBOL(submit_bio_noacct);
  * in @bio.  The bio must NOT be touched by thecaller until ->bi_end_io() has
  * been called.
  */
-// zhengxd: 块层入口
+// zhengxd: 块层入口 blk_qc_t: queue completion tag,表示请求队列完成状态
 blk_qc_t submit_bio(struct bio *bio)
 {
 	if (blkcg_punt_bio_submit(bio))
@@ -1081,11 +1083,13 @@ blk_qc_t submit_bio(struct bio *bio)
 			count = queue_logical_block_size(
 					bio->bi_bdev->bd_disk->queue) >> 9;
 		else
+		//zhengxd: 获取本次IO的数据量
 			count = bio_sectors(bio);
 
 		if (op_is_write(bio_op(bio))) {
 			count_vm_events(PGPGOUT, count);
 		} else {
+			// zhengxd: 统计获取本次IO的数据量
 			task_io_account_read(bio->bi_iter.bi_size);
 			count_vm_events(PGPGIN, count);
 		}
@@ -1117,7 +1121,7 @@ blk_qc_t submit_bio(struct bio *bio)
 
 		return ret;
 	}
-
+	// zhengxd： blaze的提交入口
 	return submit_bio_noacct(bio);
 }
 EXPORT_SYMBOL(submit_bio);

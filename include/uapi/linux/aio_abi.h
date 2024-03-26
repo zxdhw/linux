@@ -69,7 +69,7 @@ struct io_event {
  * with userland.  its up to libraries to do the
  * proper padding and aio_error abstraction
  */
-
+// zhengxd: user iocb 定义
 struct iocb {
 	/* these are internal to the kernel/libc. */
 	__u64	aio_data;	/* data to be returned in event's data */
@@ -90,10 +90,12 @@ struct iocb {
 	__u32	aio_fildes;
 
 	__u64	aio_buf;
+	// zhengxd： graphe： aio_nbytes需要固定为buffer size
 	__u64	aio_nbytes;
 	__s64	aio_offset;
 
 	/* extra parameters */
+	//zhengxd：graphe： 可能需要将其修改为data size
 	__u64	aio_reserved2;	/* TODO: use this for a (struct sigevent *) */
 
 	/* flags for the "struct iocb" */

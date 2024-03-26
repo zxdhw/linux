@@ -319,8 +319,10 @@ enum rw_hint {
 #define IOCB_WAITQ		(1 << 19)
 #define IOCB_NOIO		(1 << 20)
 
+// zhengxd： kiocb的定义可能需要修改
 struct kiocb {
 	struct file		*ki_filp;
+	// zhengxd：graphe：增加data size
 	bool			xrp_enabled;
 	char __user		*xrp_scratch_buf;
 	unsigned int		xrp_bpf_fd;

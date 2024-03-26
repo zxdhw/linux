@@ -440,6 +440,7 @@ struct bio *bio_alloc_bioset(gfp_t gfp_mask, unsigned short nr_iovecs,
 		return NULL;
 
 	bio = p + bs->front_pad;
+	// zhengxd： bio默认分配4个inline vec（16KB），不够的话重新额外分配。
 	if (nr_iovecs > BIO_INLINE_VECS) {
 		struct bio_vec *bvl = NULL;
 
@@ -870,6 +871,7 @@ bool __bio_try_merge_page(struct bio *bio, struct page *page,
 				*same_page = false;
 				return false;
 			}
+			// zhengxd： graphe： bi_size的增加
 			bv->bv_len += len;
 			bio->bi_iter.bi_size += len;
 			return true;
@@ -896,7 +898,7 @@ void __bio_add_page(struct bio *bio, struct page *page,
 
 	WARN_ON_ONCE(bio_flagged(bio, BIO_CLONED));
 	WARN_ON_ONCE(bio_full(bio, len));
-
+	//zhenxd：graphe：将page挂在 &bio->bi_io_vec[bio->bi_vcnt]下。并更新bi信息。
 	bv->bv_page = page;
 	bv->bv_offset = off;
 	bv->bv_len = len;
@@ -1018,7 +1020,8 @@ static int __bio_iov_iter_get_pages(struct bio *bio, struct iov_iter *iter)
 		struct page *page = pages[i];
 
 		len = min_t(size_t, PAGE_SIZE - offset, left);
-
+		
+		//zhengxd： 如果存在多个iter，可以判断该page是否可以和上一个 &bio->bi_io_vec队列上的page合并
 		if (__bio_try_merge_page(bio, page, len, offset, &same_page)) {
 			if (same_page)
 				put_page(page);
@@ -1081,6 +1084,7 @@ static int __bio_iov_append_get_pages(struct bio *bio, struct iov_iter *iter)
 	return ret;
 }
 
+// zhengxd： !!! 将user buffer map为 kernel page。 
 /**
  * bio_iov_iter_get_pages - add user or kernel pages to a bio
  * @bio: bio to add pages to

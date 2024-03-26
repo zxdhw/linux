@@ -78,6 +78,7 @@
 
 #define iterate_all_kinds(i, n, v, I, B, K) {			\
 	if (likely(n)) {					\
+		// zhengxd: skip = 0
 		size_t skip = i->iov_offset;			\
 		if (unlikely(i->type & ITER_BVEC)) {		\
 			struct bio_vec v;			\
@@ -460,6 +461,7 @@ void iov_iter_init(struct iov_iter *i, unsigned int direction,
 	}
 	i->nr_segs = nr_segs;
 	i->iov_offset = 0;
+	// zhengxd: buffer size (aio_nbytes)
 	i->count = count;
 }
 EXPORT_SYMBOL(iov_iter_init);
@@ -1331,6 +1333,7 @@ ssize_t iov_iter_get_pages(struct iov_iter *i,
 		return -EFAULT;
 
 	iterate_all_kinds(i, maxsize, v, ({
+		//zhengxd：修改len的长度，使之起始地址对齐PAGE_SIZE
 		unsigned long addr = (unsigned long)v.iov_base;
 		size_t len = v.iov_len + (*start = addr & (PAGE_SIZE - 1));
 		int n;
@@ -1338,8 +1341,11 @@ ssize_t iov_iter_get_pages(struct iov_iter *i,
 
 		if (len > maxpages * PAGE_SIZE)
 			len = maxpages * PAGE_SIZE;
+		//zhengxd：起始地址对齐PAGE_SIZE
 		addr &= ~(PAGE_SIZE - 1);
+		//zhengxd： 向上取整
 		n = DIV_ROUND_UP(len, PAGE_SIZE);
+		// zhengxd: graphe: 通过get_user_pages_fast,将 user memory map到page ，and pin this user memory
 		res = get_user_pages_fast(addr, n,
 				iov_iter_rw(i) != WRITE ?  FOLL_WRITE : 0,
 				pages);
@@ -1615,6 +1621,7 @@ int iov_iter_npages(const struct iov_iter *i, int maxpages)
 		npages = pipe_space_for_user(iter_head, pipe->tail, pipe);
 		if (npages >= maxpages)
 			return maxpages;
+		// zhengxd: 遍历i，迭代获取i的page数量（对于有多个iovec的情况），最后得0表示返回0.
 	} else iterate_all_kinds(i, size, v, ({
 		unsigned long p = (unsigned long)v.iov_base;
 		npages += DIV_ROUND_UP(p + v.iov_len, PAGE_SIZE)
@@ -1828,6 +1835,7 @@ int import_single_range(int rw, void __user *buf, size_t len,
 
 	iov->iov_base = buf;
 	iov->iov_len = len;
+	//zhengxd: 将iov封装进iter
 	iov_iter_init(i, rw, iov, 1, len);
 	return 0;
 }

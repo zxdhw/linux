@@ -1443,7 +1443,7 @@ static void aio_complete_rw(struct kiocb *kiocb, long res, long res2)
 	iocb->ki_res.res2 = res2;
 	iocb_put(iocb);
 }
-
+// zhengxd：new: kiocb: x2rp_data_len init
 static int aio_prep_rw(struct kiocb *req, const struct iocb *iocb)
 {
 	int ret;
@@ -1451,6 +1451,10 @@ static int aio_prep_rw(struct kiocb *req, const struct iocb *iocb)
 	req->ki_complete = aio_complete_rw;
 	req->private = NULL;
 	req->ki_pos = iocb->aio_offset;
+	//zhengxd: new: data_len(aio_reserved2) init
+	if(req->xrp_enabled){
+		req->x2rp_data_len = iocb->aio_x2rp_dsize;
+	}
 	req->ki_flags = iocb_flags(req->ki_filp);
 	if (iocb->aio_flags & IOCB_FLAG_RESFD)
 		req->ki_flags |= IOCB_EVENTFD;
@@ -1474,7 +1478,7 @@ static int aio_prep_rw(struct kiocb *req, const struct iocb *iocb)
 	ret = kiocb_set_rw_flags(req, iocb->aio_rw_flags);
 	if (unlikely(ret))
 		return ret;
-
+	// zhengxd: disable hipri（poll）
 	req->ki_flags &= ~IOCB_HIPRI; /* no one is going to poll for this I/O */
 	return 0;
 }
@@ -1487,6 +1491,7 @@ static ssize_t aio_setup_rw(int rw, const struct iocb *iocb,
 	size_t len = iocb->aio_nbytes;
 
 	if (!vectored) {
+		//zhengxd: packaging buffer in iov & iter, use *buf and len
 		ssize_t ret = import_single_range(rw, buf, len, *iovec, iter);
 		*iovec = NULL;
 		return ret;
@@ -1949,7 +1954,10 @@ SYSCALL_DEFINE3(io_submit, aio_context_t, ctx_id, long, nr,
 	percpu_ref_put(&ctx->users);
 	return i ? i : ret;
 }
-
+/*zhengxd: aio_read_xrp
+*  @bpf_fd: bpf function index
+*  @scratch_buf: parasitic request array
+*/
 static int aio_read_xrp(struct kiocb *req, const struct iocb *iocb,
 			bool vectored, bool compat, unsigned int bpf_fd, char __user *scratch_buf)
 {
@@ -1957,11 +1965,11 @@ static int aio_read_xrp(struct kiocb *req, const struct iocb *iocb,
 	struct iov_iter iter;
 	struct file *file;
 	int ret;
-
+	// zhengxd: kiocb init with xrp info
 	req->xrp_scratch_buf = scratch_buf;
 	req->xrp_bpf_fd = bpf_fd;
 	req->xrp_enabled = true;
-
+	// zhengxd: new: kiocb init x2rp_data_len
 	ret = aio_prep_rw(req, iocb);
 	if (ret)
 		return ret;
@@ -1971,17 +1979,21 @@ static int aio_read_xrp(struct kiocb *req, const struct iocb *iocb,
 	ret = -EINVAL;
 	if (unlikely(!file->f_op->read_iter))
 		return -EINVAL;
-
+	// zhengxd:  packaging buffer in iov & iter, use '*buf' and 'aio_nbytes'
 	ret = aio_setup_rw(READ, iocb, &iovec, vectored, compat, &iter);
 	if (ret < 0)
 		return ret;
-	ret = rw_verify_area(READ, file, &req->ki_pos, iov_iter_count(&iter));
+	//zhengxd: new: x2rp_data_len; old: iov_iter_count(&iter);
+	ret = rw_verify_area(READ, file, &req->ki_pos, req->x2rp_data_len);
 	if (!ret)
 		aio_rw_done(req, call_read_iter(file, req, &iter));
 	kfree(iovec);
 	return ret;
 }
-
+/* zhengxd: __io_submit_xrp_one
+*  @bpf_fd: bpf function index
+*  @scratch_buf: parasitic request array
+*/
 static int __io_submit_xrp_one(struct kioctx *ctx, const struct iocb *iocb,
 			   struct iocb __user *user_iocb, struct aio_kiocb *req,
 			   bool compat, unsigned int bpf_fd, char __user *scratch_buf)
@@ -2037,7 +2049,9 @@ static int __io_submit_xrp_one(struct kioctx *ctx, const struct iocb *iocb,
 	}
 }
 
-/* io_submit_xrp_one
+/* zhengxd: io_submit_xrp_one
+*  @bpf_fd: bpf function index
+*  @scratch_buf: parasitic request array
 */
 static int io_submit_xrp_one(struct kioctx *ctx, struct iocb __user *user_iocb,
 			 bool compat, unsigned int bpf_fd, char __user * scratch_buf)
@@ -2050,10 +2064,11 @@ static int io_submit_xrp_one(struct kioctx *ctx, struct iocb __user *user_iocb,
 		return -EFAULT;
 
 	/* enforce forwards compatibility on users */
-	if (unlikely(iocb.aio_reserved2)) {
-		pr_debug("EINVAL: reserve field set\n");
-		return -EINVAL;
-	}
+	// zhengxd: x2rp use reserved2, so comment out this.
+	// if (unlikely(iocb.aio_reserved2)) {
+	// 	pr_debug("EINVAL: reserve field set\n");
+	// 	return -EINVAL;
+	// }
 
 	/* prevent overflows */
 	if (unlikely(
@@ -2101,6 +2116,7 @@ static int io_submit_xrp_one(struct kioctx *ctx, struct iocb __user *user_iocb,
  *  @bpf_fd: bpf prog 
  *  @scratch_bufs: every io has a scratch_buf 
  */
+// zhengxd: aio_xrp entry
 SYSCALL_DEFINE5(io_submit_xrp, aio_context_t, ctx_id, long, nr, struct iocb __user * __user *, iocbpp,
 					unsigned int, bpf_fd, char __user * __user *, scratch_bufs)
 {
@@ -2120,10 +2136,11 @@ SYSCALL_DEFINE5(io_submit_xrp, aio_context_t, ctx_id, long, nr, struct iocb __us
 
 	if (nr > ctx->nr_events)
 		nr = ctx->nr_events;
-
-	if (nr > AIO_PLUG_THRESHOLD)
-		blk_start_plug(&plug);
+	// zhengxd： in v1.0, x2rp disable plug
+	// if (nr > AIO_PLUG_THRESHOLD)
+	// 	blk_start_plug(&plug);
 	for (i = 0; i < nr; i++) {
+		// zhengxd: every aio req has a scratch_buf, like __user* iocb
 		char __user * scratch_buf;
 		if (unlikely(get_user(scratch_buf, scratch_bufs + i))) {
 			ret = -EFAULT;
@@ -2134,13 +2151,14 @@ SYSCALL_DEFINE5(io_submit_xrp, aio_context_t, ctx_id, long, nr, struct iocb __us
 			ret = -EFAULT;
 			break;
 		}
-
+		// zhengxd: submit io one by one 
 		ret = io_submit_xrp_one(ctx, user_iocb, false, bpf_fd, scratch_buf);
 		if (ret)
 			break;
 	}
-	if (nr > AIO_PLUG_THRESHOLD)
-		blk_finish_plug(&plug);
+	// zhengxd: in x2rp V1.0, we disable plug
+	// if (nr > AIO_PLUG_THRESHOLD)
+	// 	blk_finish_plug(&plug);
 
 	percpu_ref_put(&ctx->users);
 	return i ? i : ret;

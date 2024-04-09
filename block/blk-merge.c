@@ -250,6 +250,7 @@ static struct bio *blk_bio_segment_split(struct request_queue *q,
 	struct bio_vec bv, bvprv, *bvprvp = NULL;
 	struct bvec_iter iter;
 	unsigned nsegs = 0, sectors = 0;
+	// zhengxd： 可以cat /sys/block/nvme*/queue 查看，max_sector_size 128K,max_segment:33
 	const unsigned max_sectors = get_max_io_size(q, bio);
 	const unsigned max_segs = queue_max_segments(q);
 
@@ -266,6 +267,7 @@ static struct bio *blk_bio_segment_split(struct request_queue *q,
 		    bv.bv_offset + bv.bv_len <= PAGE_SIZE) {
 			nsegs++;
 			sectors += bv.bv_len >> 9;
+		// zhengxd：segment数量，单个segment的size，page大小。只要有一项不符合要求就要进行拆分。
 		} else if (bvec_split_segs(q, &bv, &nsegs, &sectors, max_segs,
 					 max_sectors)) {
 			goto split;
@@ -336,6 +338,7 @@ void __blk_queue_split(struct bio **bio, unsigned int *nr_segs)
 			*nr_segs = 1;
 			break;
 		}
+		// zhengxd: 多于一个iovec，则依次判断每个segment是否需要进行split。
 		split = blk_bio_segment_split(q, *bio, &q->bio_split, nr_segs);
 		break;
 	}
@@ -906,8 +909,10 @@ enum elv_merge blk_try_merge(struct request *rq, struct bio *bio)
 {
 	if (blk_discard_mergable(rq))
 		return ELEVATOR_DISCARD_MERGE;
+	//zhengxd: 地址顺序：rq，bio
 	else if (blk_rq_pos(rq) + blk_rq_sectors(rq) == bio->bi_iter.bi_sector)
 		return ELEVATOR_BACK_MERGE;
+	//zhengxd： 地址顺序：bio， rq
 	else if (blk_rq_pos(rq) - bio_sectors(bio) == bio->bi_iter.bi_sector)
 		return ELEVATOR_FRONT_MERGE;
 	return ELEVATOR_NO_MERGE;
@@ -942,7 +947,7 @@ static enum bio_merge_status bio_attempt_back_merge(struct request *req,
 
 	if ((req->cmd_flags & REQ_FAILFAST_MASK) != ff)
 		blk_rq_set_mixed_merge(req);
-
+	//zhengxd： graphe： 将bio进行链接，修改bi_size。
 	req->biotail->bi_next = bio;
 	req->biotail = bio;
 	req->__data_len += bio->bi_iter.bi_size;
@@ -966,6 +971,8 @@ static enum bio_merge_status bio_attempt_front_merge(struct request *req,
 
 	if ((req->cmd_flags & REQ_FAILFAST_MASK) != ff)
 		blk_rq_set_mixed_merge(req);
+	
+	// zhengxd： grpahe： 将bio进行链接，修改起始sector和bi size。
 
 	bio->bi_next = req->bio;
 	req->bio = bio;

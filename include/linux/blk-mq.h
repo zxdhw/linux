@@ -75,6 +75,7 @@ struct blk_mq_hw_ctx {
 	 * @ctx_map: Bitmap for each software queue. If bit is on, there is a
 	 * pending request in that software queue.
 	 */
+	// zhengxd: 用于标记ctx上是否存在正在执行的请求
 	struct sbitmap		ctx_map;
 
 	/**
@@ -114,6 +115,7 @@ struct blk_mq_hw_ctx {
 	 * @tags: Tags owned by the block driver. A tag at this set is only
 	 * assigned when a request is dispatched from a hardware queue.
 	 */
+	// zhengxd： 用于请求分配和标记
 	struct blk_mq_tags	*tags;
 	/**
 	 * @sched_tags: Tags owned by I/O scheduler. If there is an I/O
@@ -189,7 +191,9 @@ struct blk_mq_hw_ctx {
  *	driver to map each hardware queue type (enum hctx_type) onto a distinct
  *	set of hardware queues.
  */
+// zhengxd: 软硬件队列的映射
 struct blk_mq_queue_map {
+	//zhengxd： map array，每个cpu对应一个hctx id。
 	unsigned int *mq_map;
 	unsigned int nr_queues;
 	unsigned int queue_offset;
@@ -202,6 +206,7 @@ struct blk_mq_queue_map {
  * @HCTX_TYPE_POLL:	Polled I/O of any kind.
  * @HCTX_MAX_TYPES:	Number of types of hctx.
  */
+// zhengxd： 硬件队列类型，一般为默认 DEFAULT
 enum hctx_type {
 	HCTX_TYPE_DEFAULT,
 	HCTX_TYPE_READ,
@@ -244,6 +249,7 @@ enum hctx_type {
  *		   request_queue.tag_set_list.
  */
 struct blk_mq_tag_set {
+	//zhengxd：为每种类型的hctx创建一个map（包含cpu到hctx的映射）。
 	struct blk_mq_queue_map	map[HCTX_MAX_TYPES];
 	unsigned int		nr_maps;
 	const struct blk_mq_ops	*ops;
@@ -606,6 +612,7 @@ static inline void blk_rq_bio_prep(struct request *rq, struct bio *bio,
 		unsigned int nr_segs)
 {
 	rq->nr_phys_segments = nr_segs;
+	//zhengxd：graphe：bi_size赋值
 	rq->__data_len = bio->bi_iter.bi_size;
 	rq->bio = rq->biotail = bio;
 	rq->ioprio = bio_prio(bio);

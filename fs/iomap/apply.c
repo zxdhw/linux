@@ -43,7 +43,7 @@ iomap_apply(struct inode *inode, loff_t pos, loff_t length, unsigned flags,
 	 * expose transient stale data. If the reserve fails, we can safely
 	 * back out at this point as there is nothing to undo.
 	 */
-	// zhengxd: ret 表示映射的长度
+	// zhengxd: ret 表示映射的长度, 调用对应文件系统的iomap：ext4_iomap_begin （inode.c）
 	ret = ops->iomap_begin(inode, pos, length, flags, &iomap, &srcmap);
 	if (ret)
 		return ret;

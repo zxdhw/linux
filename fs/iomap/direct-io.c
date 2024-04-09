@@ -318,7 +318,7 @@ iomap_dio_bio_actor(struct inode *inode, loff_t pos, loff_t length,
 		bio = bio_alloc(GFP_KERNEL, nr_pages);
 		//zhengxd：根据iomap获取设备信息，用于块层和驱动获取相关设备的队列
 		bio_set_dev(bio, iomap->bdev);
-		// zhengxd： 通过iomap,根据pos获取bi.sector
+		// zhengxd： graphe：通过iomap,根据pos获取bi.sector
 		bio->bi_iter.bi_sector = iomap_sector(iomap, pos);
 		bio->bi_write_hint = dio->iocb->ki_hint;
 		bio->bi_ioprio = dio->iocb->ki_ioprio;

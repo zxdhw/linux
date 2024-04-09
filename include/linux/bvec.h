@@ -28,6 +28,7 @@ struct page;
  *
  * This holds because page_is_mergeable() checks the above property.
  */
+// zhengxd: 页面是连续的，可以通过 bv_page + n 获取。
 struct bio_vec {
 	struct page	*bv_page;
 	unsigned int	bv_len;

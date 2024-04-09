@@ -3883,6 +3883,7 @@ struct nvme_ns *nvme_find_get_ns(struct nvme_ctrl *ctrl, unsigned nsid)
 }
 EXPORT_SYMBOL_NS_GPL(nvme_find_get_ns, NVME_TARGET_PASSTHRU);
 
+//zhengxd: 创建ns 和 gendisk , 并且和 nvme_dev 通过 ctrl关联
 static void nvme_alloc_ns(struct nvme_ctrl *ctrl, unsigned nsid,
 		struct nvme_ns_ids *ids)
 {
@@ -3898,7 +3899,7 @@ static void nvme_alloc_ns(struct nvme_ctrl *ctrl, unsigned nsid,
 	ns = kzalloc_node(sizeof(*ns), GFP_KERNEL, node);
 	if (!ns)
 		goto out_free_id;
-
+	// zhengxd： 初始化 reequset queue
 	ns->queue = blk_mq_init_queue(ctrl->tagset);
 	if (IS_ERR(ns->queue))
 		goto out_free_ns;
@@ -3910,6 +3911,7 @@ static void nvme_alloc_ns(struct nvme_ctrl *ctrl, unsigned nsid,
 	if (ctrl->ops->flags & NVME_F_PCI_P2PDMA)
 		blk_queue_flag_set(QUEUE_FLAG_PCI_P2PDMA, ns->queue);
 
+	// zhengxd： 初始化相关指针链接， ns 的ctrl 和 nvme_dev的ctrl
 	ns->queue->queuedata = ns;
 	ns->ctrl = ctrl;
 	kref_init(&ns->kref);
@@ -3924,6 +3926,7 @@ static void nvme_alloc_ns(struct nvme_ctrl *ctrl, unsigned nsid,
 
 	disk->fops = &nvme_bdev_ops;
 	disk->private_data = ns;
+	// zhengxd: gendisk 和 ns 公用同一个 request queue
 	disk->queue = ns->queue;
 	disk->flags = flags;
 	memcpy(disk->disk_name, disk_name, DISK_NAME_LEN);
@@ -4064,6 +4067,7 @@ static void nvme_validate_or_alloc_ns(struct nvme_ctrl *ctrl, unsigned nsid)
 	}
 
 	switch (ids.csi) {
+	//zhengxd：常规NVMe SSD
 	case NVME_CSI_NVM:
 		nvme_alloc_ns(ctrl, nsid, &ids);
 		break;
@@ -4209,6 +4213,7 @@ static void nvme_scan_work(struct work_struct *work)
 	}
 
 	mutex_lock(&ctrl->scan_lock);
+	//zhengxd: 兼容性：如果不支持list扫描就进行顺序扫描
 	if (nvme_scan_ns_list(ctrl) != 0)
 		nvme_scan_ns_sequential(ctrl);
 	mutex_unlock(&ctrl->scan_lock);

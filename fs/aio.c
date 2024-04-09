@@ -1487,7 +1487,8 @@ static ssize_t aio_setup_rw(int rw, const struct iocb *iocb,
 		struct iov_iter *iter)
 {
 	void __user *buf = (void __user *)(uintptr_t)iocb->aio_buf;
-	//zhengxd： buffer的字节数，用来初始化iov的count
+	//zhengxd： graphe: buffer的字节数，用来初始化iov的count, 改用新增的buffer_len
+	//zhengxd: graphe: kiocb->data_len 需要根据iocb->aio_nbytes来赋值。
 	size_t len = iocb->aio_nbytes;
 	//zhengxd： 单个seg，cmd为：IOCB_CMD_PREAD
 	if (!vectored) {

@@ -452,16 +452,18 @@ void iov_iter_init(struct iov_iter *i, unsigned int direction,
 	direction &= READ | WRITE;
 
 	/* It will get better.  Eventually... */
+	//zhengxd：检查当前代码是否可以访问内核地址空间。
 	if (uaccess_kernel()) {
 		i->type = ITER_KVEC | direction;
 		i->kvec = (struct kvec *)iov;
 	} else {
+		//zhengxd: aio使用的用户空间数据。
 		i->type = ITER_IOVEC | direction;
 		i->iov = iov;
 	}
 	i->nr_segs = nr_segs;
 	i->iov_offset = 0;
-	// zhengxd: buffer size (aio_nbytes)
+	// zhengxd: 需要处理的数据, buffer size (aio_nbytes)
 	i->count = count;
 }
 EXPORT_SYMBOL(iov_iter_init);

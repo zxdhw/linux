@@ -480,6 +480,7 @@ void blk_mq_sched_insert_requests(struct blk_mq_hw_ctx *hctx,
 		 * busy in case of 'none' scheduler, and this way may save
 		 * us one extra enqueue & dequeue to sw queue.
 		 */
+		//zhengxd： none调度器，hw_ctc不忙碌，run_queue_async = false (相关定义：blk_flush_plug_list(plug, false))
 		if (!hctx->dispatch_busy && !e && !run_queue_async) {
 			blk_mq_try_issue_list_directly(hctx, list);
 			if (list_empty(list))

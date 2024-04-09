@@ -5,7 +5,9 @@
 /*
  * Tag address space map.
  */
+//zhengxd：每个hw ctx分配一个。
 struct blk_mq_tags {
+	// zhengxd： 1023个，每个IO分配一个tag，用于多队列管理
 	unsigned int nr_tags;
 	unsigned int nr_reserved_tags;
 
@@ -16,7 +18,7 @@ struct blk_mq_tags {
 
 	struct sbitmap_queue __bitmap_tags;
 	struct sbitmap_queue __breserved_tags;
-
+	// rqs用于动态分配，static用于静态分配（固定大小）
 	struct request **rqs;
 	struct request **static_rqs;
 	struct list_head page_list;

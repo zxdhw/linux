@@ -133,6 +133,7 @@ struct request {
 	int internal_tag;
 
 	/* the following two fields are internal, NEVER access directly */
+	// zhengxd: graphe：用于给nvme command 赋值。
 	unsigned int __data_len;	/* total data len */
 	sector_t __sector;		/* sector cursor */
 
@@ -393,6 +394,7 @@ static inline int blkdev_zone_mgmt_ioctl(struct block_device *bdev,
 
 #endif /* CONFIG_BLK_DEV_ZONED */
 
+// zhengxd: 设备的req queue
 struct request_queue {
 	struct request		*last_merge;
 	struct elevator_queue	*elevator;
@@ -419,6 +421,7 @@ struct request_queue {
 	 * The queue owner gets to use this for whatever they like.
 	 * ll_rw_blk doesn't touch it.
 	 */
+	// zhengxd： *nvme_ns
 	void			*queuedata;
 
 	/*

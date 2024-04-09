@@ -1381,8 +1381,8 @@ struct nvme_dbbuf {
 	__u8			flags;
 	__u16			command_id;
 	__u32			rsvd1[5];
-	__le64			prp1;
-	__le64			prp2;
+	__le64			prp1; //zhengxd：DB缓冲区
+	__le64			prp2; //zhengxd：事件中断缓冲区
 	__u32			rsvd12[6];
 };
 

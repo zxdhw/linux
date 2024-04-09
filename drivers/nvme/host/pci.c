@@ -67,7 +67,7 @@ static const struct kernel_param_ops io_queue_depth_ops = {
 	.set = io_queue_depth_set,
 	.get = param_get_uint,
 };
-
+// zhengxd： 默认的io_queue_depth ,也就是 dev->q_depth
 static unsigned int io_queue_depth = 1024;
 module_param_cb(io_queue_depth, &io_queue_depth_ops, &io_queue_depth, 0644);
 MODULE_PARM_DESC(io_queue_depth, "set io queue depth, should >= 2");
@@ -189,6 +189,7 @@ static inline struct nvme_dev *to_nvme_dev(struct nvme_ctrl *ctrl)
  * commands and one for I/O commands).
  */
 struct nvme_queue {
+	//zhengxd： 可以通过nvme_queue找到对应的nvme_dev; nvme_queue保存在req的iod中。
 	struct nvme_dev *dev;
 	spinlock_t sq_lock;
 	void *sq_cmds;
@@ -316,6 +317,7 @@ static void nvme_dbbuf_set(struct nvme_dev *dev)
 
 	memset(&c, 0, sizeof(c));
 	c.dbbuf.opcode = nvme_admin_dbbuf;
+	// zhengxd: 第一个prp为db缓冲区，第二个为事件中断状态缓冲区
 	c.dbbuf.prp1 = cpu_to_le64(dev->dbbuf_dbs_dma_addr);
 	c.dbbuf.prp2 = cpu_to_le64(dev->dbbuf_eis_dma_addr);
 
@@ -407,10 +409,11 @@ static int nvme_admin_init_hctx(struct blk_mq_hw_ctx *hctx, void *data,
 	hctx->driver_data = nvmeq;
 	return 0;
 }
-
+// zhengxd： 将mq的hctx和nvme的queue关联起来
 static int nvme_init_hctx(struct blk_mq_hw_ctx *hctx, void *data,
 			  unsigned int hctx_idx)
 {
+	//zhengxd： 通过 hctx_idx将nvmeq和hctx关联
 	struct nvme_dev *dev = data;
 	struct nvme_queue *nvmeq = &dev->queues[hctx_idx + 1];
 
@@ -418,7 +421,7 @@ static int nvme_init_hctx(struct blk_mq_hw_ctx *hctx, void *data,
 	hctx->driver_data = nvmeq;
 	return 0;
 }
-
+//zhengxd：将块层req和nvmeq绑定
 static int nvme_init_request(struct blk_mq_tag_set *set, struct request *req,
 		unsigned int hctx_idx, unsigned int numa_node)
 {
@@ -1298,6 +1301,7 @@ static int adapter_alloc_cq(struct nvme_dev *dev, u16 qid,
 	c.create_cq.cqid = cpu_to_le16(qid);
 	c.create_cq.qsize = cpu_to_le16(nvmeq->q_depth - 1);
 	c.create_cq.cq_flags = cpu_to_le16(flags);
+	// zhengxd： vetcor是queue id
 	c.create_cq.irq_vector = cpu_to_le16(vector);
 
 	return nvme_submit_sync_cmd(dev->ctrl.admin_q, &c, NULL, 0);
@@ -1764,9 +1768,12 @@ static const struct blk_mq_ops nvme_mq_admin_ops = {
 };
 
 static const struct blk_mq_ops nvme_mq_ops = {
+	//zhengxd: 块层通过 queuerq进入驱动
 	.queue_rq	= nvme_queue_rq,
 	.complete	= nvme_pci_complete_rq,
+	// 块层通过nvme_queue_rq提交失败时调用。
 	.commit_rqs	= nvme_commit_rqs,
+	// 初始化相关hctx，req，map（ctx->hctx）队列
 	.init_hctx	= nvme_init_hctx,
 	.init_request	= nvme_init_request,
 	.map_queues	= nvme_pci_map_queues,
@@ -1787,7 +1794,7 @@ static void nvme_dev_remove_admin(struct nvme_dev *dev)
 		blk_mq_free_tag_set(&dev->admin_tagset);
 	}
 }
-
+// zhengxd： admin tags 创建
 static int nvme_alloc_admin_tags(struct nvme_dev *dev)
 {
 	if (!dev->ctrl.admin_q) {
@@ -1957,7 +1964,7 @@ static u32 nvme_cmb_size(struct nvme_dev *dev)
 {
 	return (dev->cmbsz >> NVME_CMBSZ_SZ_SHIFT) & NVME_CMBSZ_SZ_MASK;
 }
-
+//zhengxd: 将设备CMB（controller Memory Buffer）映射到内存空间
 static void nvme_map_cmb(struct nvme_dev *dev)
 {
 	u64 size, offset;
@@ -2287,7 +2294,7 @@ static void nvme_disable_io_queues(struct nvme_dev *dev)
 	if (__nvme_disable_io_queues(dev, nvme_admin_delete_sq))
 		__nvme_disable_io_queues(dev, nvme_admin_delete_cq);
 }
-
+// zhengxd: nvme max io queue 和 cpu相关，128个
 static unsigned int nvme_max_io_queues(struct nvme_dev *dev)
 {
 	/*
@@ -2313,7 +2320,7 @@ static int nvme_setup_io_queues(struct nvme_dev *dev)
 	 */
 	dev->nr_write_queues = write_queues;
 	dev->nr_poll_queues = poll_queues;
-
+	// zhengxd: nvme_probe设置，cpu num 128
 	nr_io_queues = dev->nr_allocated_queues - 1;
 	result = nvme_set_queue_count(&dev->ctrl, &nr_io_queues);
 	if (result < 0)
@@ -2457,23 +2464,28 @@ static bool __nvme_disable_io_queues(struct nvme_dev *dev, u8 opcode)
 	}
 	return true;
 }
-
+// zhengxd： 添加设备的时候初始化tag，hw_ctx等
 static void nvme_dev_add(struct nvme_dev *dev)
 {
 	int ret;
 
 	if (!dev->ctrl.tagset) {
+		// zhengxd： ops赋值
 		dev->tagset.ops = &nvme_mq_ops;
+		// zhengxd： hw_queues数量
 		dev->tagset.nr_hw_queues = dev->online_queues - 1;
 		dev->tagset.nr_maps = 2; /* default + read */
 		if (dev->io_queues[HCTX_TYPE_POLL])
 			dev->tagset.nr_maps++;
 		dev->tagset.timeout = NVME_IO_TIMEOUT;
 		dev->tagset.numa_node = dev->ctrl.numa_node;
+		// zhengxd： BLK_MQ_MAX_DEPTH：最大深度为10240； q_depth 为：1024
 		dev->tagset.queue_depth = min_t(unsigned int, dev->q_depth,
 						BLK_MQ_MAX_DEPTH) - 1;
+		//  zhengxd: req初始化时使用，涉及到req的大小。
 		dev->tagset.cmd_size = sizeof(struct nvme_iod);
 		dev->tagset.flags = BLK_MQ_F_SHOULD_MERGE;
+		// zhengxd： driver data赋值
 		dev->tagset.driver_data = dev;
 
 		/*
@@ -2500,7 +2512,7 @@ static void nvme_dev_add(struct nvme_dev *dev)
 
 	nvme_dbbuf_set(dev);
 }
-
+// zhengxd： pci相关设置，db，bar,MSI等
 static int nvme_pci_enable(struct nvme_dev *dev)
 {
 	int result = -ENOMEM;
@@ -2527,14 +2539,16 @@ static int nvme_pci_enable(struct nvme_dev *dev)
 	 * interrupts. Pre-enable a single MSIX or MSI vec for setup. We'll
 	 * adjust this later.
 	 */
+	//zhengxd： 中断向量号
 	result = pci_alloc_irq_vectors(pdev, 1, 1, PCI_IRQ_ALL_TYPES);
 	if (result < 0)
 		return result;
 
 	dev->ctrl.cap = lo_hi_readq(dev->bar + NVME_REG_CAP);
-
+	//zhengxd： 取决于bar空间和默认io_queue_depth(1024)，
 	dev->q_depth = min_t(u32, NVME_CAP_MQES(dev->ctrl.cap) + 1,
 				io_queue_depth);
+	// zhengxd： cat /sys/class/nvme/nvme*/sqsize：1023 
 	dev->ctrl.sqsize = dev->q_depth - 1; /* 0's based queue depth */
 	dev->db_stride = 1 << NVME_CAP_STRIDE(dev->ctrl.cap);
 	dev->dbs = dev->bar + 4096;
@@ -2577,7 +2591,7 @@ static int nvme_pci_enable(struct nvme_dev *dev)
 			 dev->q_depth);
 	}
 
-
+	//zhengxd： 映射CMB空间
 	nvme_map_cmb(dev);
 
 	pci_enable_pcie_error_reporting(pdev);
@@ -2751,14 +2765,15 @@ static void nvme_reset_work(struct work_struct *work)
 	nvme_sync_queues(&dev->ctrl);
 
 	mutex_lock(&dev->shutdown_lock);
+	//zhengxd： CMB MSI相关设置
 	result = nvme_pci_enable(dev);
 	if (result)
 		goto out_unlock;
-
+	// zhengxd： admin queue 设置（admin queue用于接受创建删除queue等操作）
 	result = nvme_pci_configure_admin_queue(dev);
 	if (result)
 		goto out_unlock;
-
+	// zhengxd： admin queue的tag设置
 	result = nvme_alloc_admin_tags(dev);
 	if (result)
 		goto out_unlock;
@@ -3030,10 +3045,11 @@ static void nvme_async_probe(void *data, async_cookie_t cookie)
 	flush_work(&dev->ctrl.scan_work);
 	nvme_put_ctrl(&dev->ctrl);
 }
-
+//zhengxd： 系统启动时，PCIe总线通过nvme_dirver的probe函数进行nvme设备初始化。
 static int nvme_probe(struct pci_dev *pdev, const struct pci_device_id *id)
 {
 	int node, result = -ENOMEM;
+	// zhengxd： 根据 pdev 创建 nvme_dev
 	struct nvme_dev *dev;
 	unsigned long quirks = id->driver_data;
 	size_t alloc_size;
@@ -3045,9 +3061,10 @@ static int nvme_probe(struct pci_dev *pdev, const struct pci_device_id *id)
 	dev = kzalloc_node(sizeof(*dev), GFP_KERNEL, node);
 	if (!dev)
 		return -ENOMEM;
-
+	// zhengxd： 是否设置单独的write queue 和poll queue
 	dev->nr_write_queues = write_queues;
 	dev->nr_poll_queues = poll_queues;
+	// zhengxd： cpu num + write queue + poll queue.(通常来说SQ是读写混合的不需要单独设置)
 	dev->nr_allocated_queues = nvme_max_io_queues(dev) + 1;
 	dev->queues = kcalloc_node(dev->nr_allocated_queues,
 			sizeof(struct nvme_queue), GFP_KERNEL, node);
@@ -3056,15 +3073,16 @@ static int nvme_probe(struct pci_dev *pdev, const struct pci_device_id *id)
 
 	dev->dev = get_device(&pdev->dev);
 	pci_set_drvdata(pdev, dev);
-
+	// zhengxd：结构体映射关联，nvme -> pci
 	result = nvme_dev_map(dev);
 	if (result)
 		goto put_pci;
-
+	// zhengxd： 初始化nvme设备相关信息，工作队列， tag set等。
 	INIT_WORK(&dev->ctrl.reset_work, nvme_reset_work);
 	INIT_WORK(&dev->remove_work, nvme_remove_dead_ctrl_work);
 	mutex_init(&dev->shutdown_lock);
 
+	// zhengxd： 创建prp池，以及prp粒度（4K）
 	result = nvme_setup_prp_pools(dev);
 	if (result)
 		goto unmap;

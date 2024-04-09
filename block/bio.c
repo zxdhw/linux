@@ -998,6 +998,7 @@ static int __bio_iov_iter_get_pages(struct bio *bio, struct iov_iter *iter)
 	unsigned short nr_pages = bio->bi_max_vecs - bio->bi_vcnt;
 	unsigned short entries_left = bio->bi_max_vecs - bio->bi_vcnt;
 	struct bio_vec *bv = bio->bi_io_vec + bio->bi_vcnt;
+	// zhengxd: 创建一个 page array，可以通过 +-n 得到相邻page，一段相邻的page array称为一个segment
 	struct page **pages = (struct page **)bv;
 	bool same_page = false;
 	ssize_t size, left;

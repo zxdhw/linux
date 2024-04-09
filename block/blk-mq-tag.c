@@ -85,7 +85,7 @@ static int __blk_mq_get_tag(struct blk_mq_alloc_data *data,
 	else
 		return __sbitmap_queue_get(bt);
 }
-
+//zhengxd: 从bitmap中获取tag
 unsigned int blk_mq_get_tag(struct blk_mq_alloc_data *data)
 {
 	struct blk_mq_tags *tags = blk_mq_tags_from_data(data);
@@ -98,6 +98,7 @@ unsigned int blk_mq_get_tag(struct blk_mq_alloc_data *data)
 	if (data->flags & BLK_MQ_REQ_RESERVED) {
 		if (unlikely(!tags->nr_reserved_tags)) {
 			WARN_ON_ONCE(1);
+			//zhengxd： 没有可用标签
 			return BLK_MQ_NO_TAG;
 		}
 		bt = tags->breserved_tags;
@@ -112,8 +113,9 @@ unsigned int blk_mq_get_tag(struct blk_mq_alloc_data *data)
 		goto found_tag;
 
 	if (data->flags & BLK_MQ_REQ_NOWAIT)
+		//zhengxd： 没有标签时是否等待。
 		return BLK_MQ_NO_TAG;
-
+	//zhengxxd： 等待标签
 	ws = bt_wait_ptr(bt, data->hctx);
 	do {
 		struct sbitmap_queue *bt_prev;

@@ -278,6 +278,7 @@ static struct request *blk_mq_rq_ctx_init(struct blk_mq_alloc_data *data,
 		unsigned int tag, u64 alloc_time_ns)
 {
 	struct blk_mq_tags *tags = blk_mq_tags_from_data(data);
+	//zhengxd: 根据分配的tag，从静态rqs中分配req。
 	struct request *rq = tags->static_rqs[tag];
 
 	if (data->q->elevator) {
@@ -289,6 +290,7 @@ static struct request *blk_mq_rq_ctx_init(struct blk_mq_alloc_data *data,
 	}
 
 	/* csd/requeue_work/fifo_time is initialized before use */
+	// zhengxd： 对req进行初始化
 	rq->q = data->q;
 	rq->mq_ctx = data->ctx;
 	rq->mq_hctx = data->hctx;
@@ -372,6 +374,7 @@ static struct request *__blk_mq_alloc_request(struct blk_mq_alloc_data *data)
 	}
 
 retry:
+	//zhengxd： 根据运行情况获取软件ctx（在哪个cpu上运行）
 	data->ctx = blk_mq_get_ctx(q);
 	data->hctx = blk_mq_map_queue(q, data->cmd_flags, data->ctx);
 	if (!e)
@@ -382,6 +385,7 @@ retry:
 	 * case just retry the hctx assignment and tag allocation as CPU hotplug
 	 * should have migrated us to an online CPU by now.
 	 */
+	// zhengxd： 用于管理块层请求的tag，每个请求一个。
 	tag = blk_mq_get_tag(data);
 	if (tag == BLK_MQ_NO_TAG) {
 		if (data->flags & BLK_MQ_REQ_NOWAIT)
@@ -1915,7 +1919,7 @@ void blk_mq_flush_plug_list(struct blk_plug *plug, bool from_schedule)
 	if (list_empty(&plug->mq_list))
 		return;
 	list_splice_init(&plug->mq_list, &list);
-
+	// zhengxd：plug请求数量大于2，而且定义了多队列（请求来自多个设备）。
 	if (plug->rq_count > 2 && plug->multiple_queues)
 		list_sort(NULL, &list, plug_rq_cmp);
 
@@ -1928,7 +1932,7 @@ void blk_mq_flush_plug_list(struct blk_plug *plug, bool from_schedule)
 		struct blk_mq_hw_ctx *this_hctx = head_rq->mq_hctx;
 		struct blk_mq_ctx *this_ctx = head_rq->mq_ctx;
 		unsigned int depth = 1;
-
+		// zhengxd： 找到属于同一个 hctx和ctx的req，批量下发。
 		list_for_each_continue(pos, &list) {
 			rq = list_entry_rq(pos);
 			BUG_ON(!rq->q);
@@ -1951,9 +1955,10 @@ static void blk_mq_bio_to_request(struct request *rq, struct bio *bio,
 
 	if (bio->bi_opf & REQ_RAHEAD)
 		rq->cmd_flags |= REQ_FAILFAST_MASK;
-
+	//zhengxd： graphe： 起始地址bi_sector的赋值。
 	rq->__sector = bio->bi_iter.bi_sector;
 	rq->write_hint = bio->bi_write_hint;
+	//zhengxd：将bio链接进req，对bi_size进行赋值
 	blk_rq_bio_prep(rq, bio, nr_segs);
 
 	/* This can't fail, since GFP_NOIO includes __GFP_DIRECT_RECLAIM. */
@@ -1982,6 +1987,7 @@ static blk_status_t __blk_mq_issue_directly(struct blk_mq_hw_ctx *hctx,
 	 * Any other error (busy), just add it to our list as we
 	 * previously would have done.
 	 */
+	// zhengxd： end： 执行nvme注册的nvme_queue_rq  
 	ret = q->mq_ops->queue_rq(hctx, &bd);
 	switch (ret) {
 	case BLK_STS_OK:
@@ -2128,11 +2134,14 @@ static void blk_add_rq_to_plug(struct blk_plug *plug, struct request *rq)
 {
 	list_add_tail(&rq->queuelist, &plug->mq_list);
 	plug->rq_count++;
+	//zhengxd： 对plug中的请求是否来自多对列进行判断
+	//zhengxd： 不是对队列 && 存在多个请求
 	if (!plug->multiple_queues && !list_is_singular(&plug->mq_list)) {
 		struct request *tmp;
 
 		tmp = list_first_entry(&plug->mq_list, struct request,
 						queuelist);
+		// zhenxd： 如果两个请求不是同一个request_queue（来自不同的设备，则将mq置为true）
 		if (tmp->q != rq->q)
 			plug->multiple_queues = true;
 	}
@@ -2155,6 +2164,7 @@ static void blk_add_rq_to_plug(struct blk_plug *plug, struct request *rq)
  */
 blk_qc_t blk_mq_submit_bio(struct bio *bio)
 {
+	// zhengxd： 驱动初始化时会初始化硬件队列(mq_ctx mq_hw_ctx)
 	struct request_queue *q = bio->bi_bdev->bd_disk->queue;
 	const int is_sync = op_is_sync(bio->bi_opf);
 	const int is_flush_fua = op_is_flush(bio->bi_opf);
@@ -2170,11 +2180,14 @@ blk_qc_t blk_mq_submit_bio(struct bio *bio)
 	bool hipri;
 
 	blk_queue_bounce(q, &bio);
+	// zhengxd: 对大于33个segment，单个segment大于128KB的bio进行split。
 	__blk_queue_split(&bio, &nr_segs);
 
 	if (!bio_integrity_prep(bio))
 		goto queue_exit;
-	// zhengxd： 主要开销 进行合并，!blk_queue_nomerges(q)似乎可以通过该参数关闭
+	// zhengxd： 主要开销, 将bio和现有的req进行合并，!blk_queue_nomerges(q)似乎可以通过该参数关闭（echo sys/block/nvme*/queue/nomerge）
+	// graphe：bio与rq的合并会修改相应的bi sector起始地址和长度
+	// graphe： bio合并后scratch如何传递其他的请求。如何识别对应的req。
 	if (!is_flush_fua && !blk_queue_nomerges(q) &&
 	    blk_attempt_plug_merge(q, bio, nr_segs, &same_queue_rq))
 		goto queue_exit;
@@ -2218,7 +2231,9 @@ blk_qc_t blk_mq_submit_bio(struct bio *bio)
 		/* Bypass scheduler for flush requests */
 		blk_insert_flush(rq);
 		blk_mq_run_hw_queue(data.hctx, true);
-	//zhengxd：慢速设备，硬件队列为1
+	//zhengxd：硬件队列为1(通常为慢速设备);
+	//         支持多队列提交（nvme定义了自己的commit_rqs pci.c line 1769: {.commit_rqs	= nvme_commit_rqs} );
+	//         !blk_queue_nonrot，不是 非旋转设备（SSD），也就是说是HDD，用来判断设备是否为磁盘rotating
 	} else if (plug && (q->nr_hw_queues == 1 || q->mq_ops->commit_rqs ||
 				!blk_queue_nonrot(q))) {
 		/*
@@ -2235,7 +2250,8 @@ blk_qc_t blk_mq_submit_bio(struct bio *bio)
 			trace_block_plug(q);
 		else
 			last = list_entry_rq(plug->mq_list.prev);
-
+		// zhengxd: req数量超出限制（16个），或者最后一个请求大小超过限制 128 * 1024（128KB）
+		// graphe： 根据rq->data_len来判断。data_len需要考虑如何赋值。
 		if (request_count >= BLK_MAX_REQUEST_COUNT || (last &&
 		    blk_rq_bytes(last) >= BLK_PLUG_FLUSH_SIZE)) {
 			blk_flush_plug_list(plug, false);
@@ -2243,11 +2259,10 @@ blk_qc_t blk_mq_submit_bio(struct bio *bio)
 		}
 
 		blk_add_rq_to_plug(plug, rq);
-	// zhengxd：调度器
 	} else if (q->elevator) {
 		/* Insert the request at the IO scheduler queue */
 		blk_mq_sched_insert_request(rq, false, true, true);
-	//zhengxd：开启plug，不禁止合并，blaze的方式
+	//zhengxd：开启plug，不禁止合并
 	} else if (plug && !blk_queue_nomerges(q)) {
 		/*
 		 * We do limited plugging. If the bio can be merged, do that.
@@ -2341,15 +2356,14 @@ struct blk_mq_tags *blk_mq_alloc_rq_map(struct blk_mq_tag_set *set,
 {
 	struct blk_mq_tags *tags;
 	int node;
-
 	node = blk_mq_hw_queue_to_node(&set->map[HCTX_TYPE_DEFAULT], hctx_idx);
 	if (node == NUMA_NO_NODE)
 		node = set->numa_node;
-
+	//zhengxd： 分配 tag 结构体空间
 	tags = blk_mq_init_tags(nr_tags, reserved_tags, node, flags);
 	if (!tags)
 		return NULL;
-
+	//zhengxd：分配rqs的req指针 空间
 	tags->rqs = kcalloc_node(nr_tags, sizeof(struct request *),
 				 GFP_NOIO | __GFP_NOWARN | __GFP_NORETRY,
 				 node);
@@ -2357,7 +2371,7 @@ struct blk_mq_tags *blk_mq_alloc_rq_map(struct blk_mq_tag_set *set,
 		blk_mq_free_tags(tags, flags);
 		return NULL;
 	}
-
+	// zhengxd：分配static rqs的req指针 空间
 	tags->static_rqs = kcalloc_node(nr_tags, sizeof(struct request *),
 					GFP_NOIO | __GFP_NOWARN | __GFP_NORETRY,
 					node);
@@ -2389,7 +2403,7 @@ static int blk_mq_init_request(struct blk_mq_tag_set *set, struct request *rq,
 	WRITE_ONCE(rq->state, MQ_RQ_IDLE);
 	return 0;
 }
-
+// zhengxd： 给req分配物理page空间，并挂到tags->static_rqs（静态req）上。tags->rqs动态分配。
 int blk_mq_alloc_rqs(struct blk_mq_tag_set *set, struct blk_mq_tags *tags,
 		     unsigned int hctx_idx, unsigned int depth)
 {
@@ -2407,6 +2421,7 @@ int blk_mq_alloc_rqs(struct blk_mq_tag_set *set, struct blk_mq_tags *tags,
 	 * rq_size is the size of the request plus driver payload, rounded
 	 * to the cacheline size
 	 */
+	// zhengxd： 分配req空间，每个req后面跟上一个cmd_size，也就是PDU。并向上舍入到缓存行大小。
 	rq_size = round_up(sizeof(struct request) + set->cmd_size,
 				cache_line_size());
 	left = rq_size * depth;
@@ -2449,7 +2464,7 @@ int blk_mq_alloc_rqs(struct blk_mq_tag_set *set, struct blk_mq_tags *tags,
 		left -= to_do * rq_size;
 		for (j = 0; j < to_do; j++) {
 			struct request *rq = p;
-
+			//zhengxd：将分配好的req地址放入rqs。
 			tags->static_rqs[i] = rq;
 			if (blk_mq_init_request(set, rq, hctx_idx, node)) {
 				tags->static_rqs[i] = NULL;
@@ -2654,7 +2669,7 @@ static int blk_mq_init_hctx(struct request_queue *q,
 	cpuhp_state_add_instance_nocalls(CPUHP_BLK_MQ_DEAD, &hctx->cpuhp_dead);
 
 	hctx->tags = set->tags[hctx_idx];
-
+	//zhengxd： 调用pci.c nvme_init_hctx
 	if (set->ops->init_hctx &&
 	    set->ops->init_hctx(hctx, set->driver_data, hctx_idx))
 		goto unregister_cpu_notifier;
@@ -2774,12 +2789,12 @@ static bool __blk_mq_alloc_map_and_request(struct blk_mq_tag_set *set,
 {
 	unsigned int flags = set->flags;
 	int ret = 0;
-
+	// zhengxd: 分配rqs的指针空间
 	set->tags[hctx_idx] = blk_mq_alloc_rq_map(set, hctx_idx,
 					set->queue_depth, set->reserved_tags, flags);
 	if (!set->tags[hctx_idx])
 		return false;
-
+	// zhengxd： 分配具体的req物理page空间（只分配static_rqs）。
 	ret = blk_mq_alloc_rqs(set, set->tags[hctx_idx], hctx_idx,
 				set->queue_depth);
 	if (!ret)
@@ -2801,7 +2816,7 @@ static void blk_mq_free_map_and_requests(struct blk_mq_tag_set *set,
 		set->tags[hctx_idx] = NULL;
 	}
 }
-
+// zhengxd： Map software to hardware queues.
 static void blk_mq_map_swqueue(struct request_queue *q)
 {
 	unsigned int i, j, hctx_idx;
@@ -3051,6 +3066,7 @@ struct request_queue *blk_mq_init_queue_data(struct blk_mq_tag_set *set,
 }
 EXPORT_SYMBOL_GPL(blk_mq_init_queue_data);
 
+// zhengxd： nvme 调用该函数进行 request queue的初始化
 struct request_queue *blk_mq_init_queue(struct blk_mq_tag_set *set)
 {
 	return blk_mq_init_queue_data(set, NULL);
@@ -3207,6 +3223,7 @@ struct request_queue *blk_mq_init_allocated_queue(struct blk_mq_tag_set *set,
 						  bool elevator_init)
 {
 	/* mark the queue as mq asap */
+	//zhengxd： 设置队列的mq ops
 	q->mq_ops = set->ops;
 
 	q->poll_cb = blk_stat_alloc_callback(blk_mq_poll_stats_fn,
@@ -3214,7 +3231,7 @@ struct request_queue *blk_mq_init_allocated_queue(struct blk_mq_tag_set *set,
 					     BLK_MQ_POLL_STATS_BKTS, q);
 	if (!q->poll_cb)
 		goto err_exit;
-
+	//zhengxd： 创建软件ctx
 	if (blk_mq_alloc_ctxs(q))
 		goto err_poll;
 
@@ -3250,7 +3267,7 @@ struct request_queue *blk_mq_init_allocated_queue(struct blk_mq_tag_set *set,
 	 * Default to classic polling
 	 */
 	q->poll_nsec = BLK_MQ_POLL_CLASSIC;
-
+	// zhengxd： 将ctx 和 hwctx 关联
 	blk_mq_init_cpu_queues(q, set->nr_hw_queues);
 	blk_mq_add_queue_tag_set(set, q);
 	blk_mq_map_swqueue(q);
@@ -3285,7 +3302,7 @@ void blk_mq_exit_queue(struct request_queue *q)
 static int __blk_mq_alloc_rq_maps(struct blk_mq_tag_set *set)
 {
 	int i;
-
+	//zhengxd： hw_queue 128
 	for (i = 0; i < set->nr_hw_queues; i++) {
 		if (!__blk_mq_alloc_map_and_request(set, i))
 			goto out_unwind;
@@ -3310,13 +3327,13 @@ static int blk_mq_alloc_map_and_requests(struct blk_mq_tag_set *set)
 {
 	unsigned int depth;
 	int err;
-
+	// zhenngxd：
 	depth = set->queue_depth;
 	do {
 		err = __blk_mq_alloc_rq_maps(set);
 		if (!err)
 			break;
-
+		// zhengxd：如果分配失败则减少空间，1023 -> 511, 继续尝试分配
 		set->queue_depth >>= 1;
 		if (set->queue_depth < set->reserved_tags + BLK_MQ_TAG_MIN) {
 			err = -ENOMEM;
@@ -3369,6 +3386,7 @@ static int blk_mq_update_queue_map(struct blk_mq_tag_set *set)
 		return set->ops->map_queues(set);
 	} else {
 		BUG_ON(set->nr_maps > 1);
+		// zhengxd: ctx 和 hctx 的映射
 		return blk_mq_map_queues(&set->map[HCTX_TYPE_DEFAULT]);
 	}
 }
@@ -3408,6 +3426,7 @@ static int blk_mq_alloc_tag_set_tags(struct blk_mq_tag_set *set,
  * requested depth down, if it's too large. In that case, the set
  * value will be stored in set->queue_depth.
  */
+// zhengxd：nvme_dev_add 或者 nvme_alloc_admin_tags 调用该函数进行tag set初始化
 int blk_mq_alloc_tag_set(struct blk_mq_tag_set *set)
 {
 	int i, ret;
@@ -3416,6 +3435,7 @@ int blk_mq_alloc_tag_set(struct blk_mq_tag_set *set)
 
 	if (!set->nr_hw_queues)
 		return -EINVAL;
+	//zhengxd： queue depteh： 1023
 	if (!set->queue_depth)
 		return -EINVAL;
 	if (set->queue_depth < set->reserved_tags + BLK_MQ_TAG_MIN)
@@ -3452,13 +3472,15 @@ int blk_mq_alloc_tag_set(struct blk_mq_tag_set *set)
 	 * There is no use for more h/w queues than cpus if we just have
 	 * a single map
 	 */
+	// zhengxd： 只有一种map（default），强行让hwctx = cpu num
 	if (set->nr_maps == 1 && set->nr_hw_queues > nr_cpu_ids)
 		set->nr_hw_queues = nr_cpu_ids;
-
+	// zhengxd: 根据nwctx的数量 分配hctx的tags指针空间，每个hwctx均需要一个tags指针
 	if (blk_mq_alloc_tag_set_tags(set, set->nr_hw_queues) < 0)
 		return -ENOMEM;
 
 	ret = -ENOMEM;
+	// zhengxd： 根据cpu num初始化map大小
 	for (i = 0; i < set->nr_maps; i++) {
 		set->map[i].mq_map = kcalloc_node(nr_cpu_ids,
 						  sizeof(set->map[i].mq_map[0]),
@@ -3471,7 +3493,7 @@ int blk_mq_alloc_tag_set(struct blk_mq_tag_set *set)
 	ret = blk_mq_update_queue_map(set);
 	if (ret)
 		goto out_free_mq_map;
-
+	// zhengxd： 进入req相关分配
 	ret = blk_mq_alloc_map_and_requests(set);
 	if (ret)
 		goto out_free_mq_map;

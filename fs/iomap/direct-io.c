@@ -284,7 +284,8 @@ iomap_dio_bio_actor(struct inode *inode, loff_t pos, loff_t length,
 	 * we are done.
 	 */
 	orig_count = iov_iter_count(dio->submit.iter);
-	iov_iter_truncate(dio->submit.iter, length);
+	//zhengxd： disable truncate
+	// iov_iter_truncate(dio->submit.iter, length);
 
 	if (!iov_iter_count(dio->submit.iter))
 		goto out;
@@ -302,7 +303,7 @@ iomap_dio_bio_actor(struct inode *inode, loff_t pos, loff_t length,
 	 * operation.
 	 */
 	bio_opf = iomap_dio_bio_opflags(dio, iomap, use_fua);
-
+	//zhengxd: max: 256 page; return the number of page alignments
 	nr_pages = bio_iov_vecs_to_alloc(dio->submit.iter, BIO_MAX_VECS);
 	do {
 		size_t n;
@@ -337,6 +338,10 @@ iomap_dio_bio_actor(struct inode *inode, loff_t pos, loff_t length,
 		bio->xrp_inode = dio->iocb->ki_filp->f_inode;
 		bio->xrp_partition_start_sector = 0;
 		bio->xrp_count = 1;
+		//zhengxd: init bi_size with x2rp_data_len
+		if(bio->xrp_enalbed) {
+			bio->bi_iter.bi_size = dio->iocb->x2rp_data_len;
+		}
 		if (bio->xrp_enabled) {
 			if (get_user_pages_fast(dio->iocb->xrp_scratch_buf, 1, FOLL_WRITE, &bio->xrp_scratch_page) != 1) {
 				printk("iomap_dio_bio_actor: failed to get scratch page\n");
@@ -353,7 +358,7 @@ iomap_dio_bio_actor(struct inode *inode, loff_t pos, loff_t length,
 				bio->xrp_enabled = false;
 			}
 		}
-
+		//zhengxd: mutli segments produce  error
 		n = bio->bi_iter.bi_size;
 		if (dio->flags & IOMAP_DIO_WRITE) {
 			task_io_account_write(n);
@@ -361,7 +366,7 @@ iomap_dio_bio_actor(struct inode *inode, loff_t pos, loff_t length,
 			if (dio->flags & IOMAP_DIO_DIRTY)
 				bio_set_pages_dirty(bio);
 		}
-
+		//zhengxd： dio->size initial value is 0
 		dio->size += n;
 		copied += n;
 
@@ -443,6 +448,7 @@ iomap_dio_actor(struct inode *inode, loff_t pos, loff_t length,
 		if (!(dio->flags & IOMAP_DIO_WRITE))
 			return iomap_dio_hole_actor(length, dio);
 		return iomap_dio_bio_actor(inode, pos, length, dio, iomap);
+	// zhengxd: mapped address
 	case IOMAP_MAPPED:
 		return iomap_dio_bio_actor(inode, pos, length, dio, iomap);
 	case IOMAP_INLINE:
@@ -481,10 +487,17 @@ __iomap_dio_rw(struct kiocb *iocb, struct iov_iter *iter,
 		unsigned int dio_flags)
 {
 	struct address_space *mapping = iocb->ki_filp->f_mapping;
+	// zhengxd: get file inode(iomap get a range address map with inode )
 	struct inode *inode = file_inode(iocb->ki_filp);
+	//zhengxd: get buffer size
 	size_t count = iov_iter_count(iter);
+	//zhengxd: get data size
+	size_t data_len = iocb->x2rp_data_len;
 	loff_t pos = iocb->ki_pos;
-	loff_t end = iocb->ki_pos + count - 1, ret = 0;
+	//zhengxd: old init end
+	// loff_t end = iocb->ki_pos + count - 1, ret = 0;
+	//zhengxd: new end init
+	loff_t end = iocb->ki_pos + data_len - 1, ret = 0;
 	bool wait_for_completion =
 		is_sync_kiocb(iocb) || (dio_flags & IOMAP_DIO_FORCE_WAIT);
 	unsigned int iomap_flags = IOMAP_DIRECT;
@@ -492,6 +505,9 @@ __iomap_dio_rw(struct kiocb *iocb, struct iov_iter *iter,
 	struct iomap_dio *dio;
 
 	if (!count)
+		return NULL;
+	//zhengxd: datalen assert
+	if(!data_len)
 		return NULL;
 
 	dio = kmalloc(sizeof(*dio), GFP_KERNEL);
@@ -578,7 +594,10 @@ __iomap_dio_rw(struct kiocb *iocb, struct iov_iter *iter,
 
 	blk_start_plug(&plug);
 	do {
-		ret = iomap_apply(inode, pos, count, iomap_flags, ops, dio,
+		//zhengxd: pass datalen instead of buffer count； buffer count pass with dio->submit_iter
+		// ret = iomap_apply(inode, pos, count, iomap_flags, ops, dio,
+		// 		iomap_dio_actor);
+		ret = iomap_apply(inode, pos, data_len, iomap_flags, ops, dio,
 				iomap_dio_actor);
 		if (ret <= 0) {
 			/* magic error code to fall back to buffered I/O */
@@ -589,7 +608,7 @@ __iomap_dio_rw(struct kiocb *iocb, struct iov_iter *iter,
 			break;
 		}
 		pos += ret;
-
+		//zhengxd: if read out of file, roll back
 		if (iov_iter_rw(iter) == READ && pos >= dio->i_size) {
 			/*
 			 * We only report that we've read data up to i_size.
@@ -599,6 +618,10 @@ __iomap_dio_rw(struct kiocb *iocb, struct iov_iter *iter,
 			iov_iter_revert(iter, pos - dio->i_size);
 			break;
 		}
+	/*zhengxd: the LBA of req must be continuous. 
+	 *in V1.0 we just ignore this problem , and assumed all req address is continuous
+	 *so, the do-while loop just execute once
+	 */
 	} while ((count = iov_iter_count(iter)) > 0);
 	blk_finish_plug(&plug);
 

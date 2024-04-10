@@ -2064,7 +2064,8 @@ static int io_submit_xrp_one(struct kioctx *ctx, struct iocb __user *user_iocb,
 		return -EFAULT;
 
 	/* enforce forwards compatibility on users */
-	// zhengxd: x2rp use reserved2, so comment out this.
+
+	// zhengxd: new: x2rp use reserved2, so comment out this.
 	// if (unlikely(iocb.aio_reserved2)) {
 	// 	pr_debug("EINVAL: reserve field set\n");
 	// 	return -EINVAL;
@@ -2136,7 +2137,7 @@ SYSCALL_DEFINE5(io_submit_xrp, aio_context_t, ctx_id, long, nr, struct iocb __us
 
 	if (nr > ctx->nr_events)
 		nr = ctx->nr_events;
-	// zhengxd： in v1.0, x2rp disable plug
+	// zhengxd：new: in v1.0, x2rp disable plug
 	// if (nr > AIO_PLUG_THRESHOLD)
 	// 	blk_start_plug(&plug);
 	for (i = 0; i < nr; i++) {
@@ -2156,7 +2157,7 @@ SYSCALL_DEFINE5(io_submit_xrp, aio_context_t, ctx_id, long, nr, struct iocb __us
 		if (ret)
 			break;
 	}
-	// zhengxd: in x2rp V1.0, we disable plug
+	// zhengxd: new: in x2rp V1.0, we disable plug
 	// if (nr > AIO_PLUG_THRESHOLD)
 	// 	blk_finish_plug(&plug);
 

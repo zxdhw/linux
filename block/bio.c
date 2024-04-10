@@ -901,7 +901,8 @@ void __bio_add_page(struct bio *bio, struct page *page,
 	bv->bv_offset = off;
 	bv->bv_len = len;
 
-	bio->bi_iter.bi_size += len;
+	//zhengxd: bi_size init with dataszie instead of buffer len
+	if(!bio->xrp_enabled) bio->bi_iter.bi_size += len;
 	bio->bi_vcnt++;
 
 	if (!bio_flagged(bio, BIO_WORKINGSET) && unlikely(PageWorkingset(page)))
@@ -1018,13 +1019,14 @@ static int __bio_iov_iter_get_pages(struct bio *bio, struct iov_iter *iter)
 		struct page *page = pages[i];
 
 		len = min_t(size_t, PAGE_SIZE - offset, left);
-
+		// zhengxd: smaller than pegesize(4K)
 		if (__bio_try_merge_page(bio, page, len, offset, &same_page)) {
 			if (same_page)
 				put_page(page);
 		} else {
 			if (WARN_ON_ONCE(bio_full(bio, len)))
                                 return -EINVAL;
+			//zhengxd: modify bio->bi_iter.bi_size
 			__bio_add_page(bio, page, len, offset);
 		}
 		offset = 0;

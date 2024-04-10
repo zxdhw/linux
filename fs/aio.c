@@ -1864,12 +1864,12 @@ static int io_submit_one(struct kioctx *ctx, struct iocb __user *user_iocb,
 
 	if (unlikely(copy_from_user(&iocb, user_iocb, sizeof(iocb))))
 		return -EFAULT;
-
-	/* enforce forwards compatibility on users */
-	if (unlikely(iocb.aio_reserved2)) {
-		pr_debug("EINVAL: reserve field set\n");
-		return -EINVAL;
-	}
+	//zhengxd: comment
+	// /* enforce forwards compatibility on users */
+	// if (unlikely(iocb.aio_reserved2)) {
+	// 	pr_debug("EINVAL: reserve field set\n");
+	// 	return -EINVAL;
+	// }
 
 	/* prevent overflows */
 	if (unlikely(

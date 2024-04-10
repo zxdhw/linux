@@ -339,7 +339,7 @@ iomap_dio_bio_actor(struct inode *inode, loff_t pos, loff_t length,
 		bio->xrp_partition_start_sector = 0;
 		bio->xrp_count = 1;
 		//zhengxd: init bi_size with x2rp_data_len
-		if(bio->xrp_enalbed) {
+		if(bio->xrp_enabled) {
 			bio->bi_iter.bi_size = dio->iocb->x2rp_data_len;
 		}
 		if (bio->xrp_enabled) {

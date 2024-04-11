@@ -1951,7 +1951,7 @@ static void blk_mq_bio_to_request(struct request *rq, struct bio *bio,
 
 	if (bio->bi_opf & REQ_RAHEAD)
 		rq->cmd_flags |= REQ_FAILFAST_MASK;
-
+	// zhengxd: start pos
 	rq->__sector = bio->bi_iter.bi_sector;
 	rq->write_hint = bio->bi_write_hint;
 	blk_rq_bio_prep(rq, bio, nr_segs);
@@ -1982,6 +1982,7 @@ static blk_status_t __blk_mq_issue_directly(struct blk_mq_hw_ctx *hctx,
 	 * Any other error (busy), just add it to our list as we
 	 * previously would have done.
 	 */
+	//zhengxd: block layer end
 	ret = q->mq_ops->queue_rq(hctx, &bd);
 	switch (ret) {
 	case BLK_STS_OK:
@@ -2153,6 +2154,7 @@ static void blk_add_rq_to_plug(struct blk_plug *plug, struct request *rq)
  *
  * Returns: Request queue cookie.
  */
+//zhengxd: mq entry
 blk_qc_t blk_mq_submit_bio(struct bio *bio)
 {
 	struct request_queue *q = bio->bi_bdev->bd_disk->queue;
@@ -2170,11 +2172,12 @@ blk_qc_t blk_mq_submit_bio(struct bio *bio)
 	bool hipri;
 
 	blk_queue_bounce(q, &bio);
+	//zhengxd: if(bio > 128KB || segments > 33) 
 	__blk_queue_split(&bio, &nr_segs);
 
 	if (!bio_integrity_prep(bio))
 		goto queue_exit;
-
+	//zhengxd: disbaled nomerge
 	if (!is_flush_fua && !blk_queue_nomerges(q) &&
 	    blk_attempt_plug_merge(q, bio, nr_segs, &same_queue_rq))
 		goto queue_exit;
@@ -2187,6 +2190,7 @@ blk_qc_t blk_mq_submit_bio(struct bio *bio)
 	hipri = bio->bi_opf & REQ_HIPRI;
 
 	data.cmd_flags = bio->bi_opf;
+	//zhengxd: alloc req from hctx->rqs
 	rq = __blk_mq_alloc_request(&data);
 	if (unlikely(!rq)) {
 		rq_qos_cleanup(q, bio);
@@ -2200,7 +2204,7 @@ blk_qc_t blk_mq_submit_bio(struct bio *bio)
 	rq_qos_track(q, rq, bio);
 
 	cookie = request_to_qc_t(data.hctx, rq);
-
+	//zhengxd: bio -> req
 	blk_mq_bio_to_request(rq, bio, nr_segs);
 
 	ret = blk_crypto_init_request(rq);
@@ -2216,6 +2220,7 @@ blk_qc_t blk_mq_submit_bio(struct bio *bio)
 		/* Bypass scheduler for flush requests */
 		blk_insert_flush(rq);
 		blk_mq_run_hw_queue(data.hctx, true);
+	//zhengxd:  pci.c line 1769: {.commit_rqs	= nvme_commit_rqs} );
 	} else if (plug && (q->nr_hw_queues == 1 || q->mq_ops->commit_rqs ||
 				!blk_queue_nonrot(q))) {
 		/*
@@ -2232,7 +2237,7 @@ blk_qc_t blk_mq_submit_bio(struct bio *bio)
 			trace_block_plug(q);
 		else
 			last = list_entry_rq(plug->mq_list.prev);
-
+		//zhengxd: count >= 16 || last rq size > 128K
 		if (request_count >= BLK_MAX_REQUEST_COUNT || (last &&
 		    blk_rq_bytes(last) >= BLK_PLUG_FLUSH_SIZE)) {
 			blk_flush_plug_list(plug, false);

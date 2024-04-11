@@ -606,6 +606,7 @@ static inline void blk_rq_bio_prep(struct request *rq, struct bio *bio,
 		unsigned int nr_segs)
 {
 	rq->nr_phys_segments = nr_segs;
+	//zhengxd: data len
 	rq->__data_len = bio->bi_iter.bi_size;
 	rq->bio = rq->biotail = bio;
 	rq->ioprio = bio_prio(bio);

@@ -1044,8 +1044,8 @@ blk_qc_t submit_bio_noacct(struct bio *bio)
 		bio_list_add(&current->bio_list[0], bio);
 		return BLK_QC_T_NONE;
 	}
-
 	if (!bio->bi_bdev->bd_disk->fops->submit_bio)
+		//zhengxd: nvme device path
 		return __submit_bio_noacct_mq(bio);
 	return __submit_bio_noacct(bio);
 }
@@ -1064,6 +1064,7 @@ EXPORT_SYMBOL(submit_bio_noacct);
  * in @bio.  The bio must NOT be touched by thecaller until ->bi_end_io() has
  * been called.
  */
+//zhengxd: block entry
 blk_qc_t submit_bio(struct bio *bio)
 {
 	if (blkcg_punt_bio_submit(bio))

@@ -2124,7 +2124,8 @@ SYSCALL_DEFINE5(io_submit_xrp, aio_context_t, ctx_id, long, nr, struct iocb __us
 	struct kioctx *ctx;
 	long ret = 0;
 	int i = 0;
-	struct blk_plug plug;
+	//zhengxd: comment plug
+	// struct blk_plug plug;
 
 	if (unlikely(nr < 0))
 		return -EINVAL;

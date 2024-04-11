@@ -827,7 +827,7 @@ static blk_status_t nvme_setup_sgl_simple(struct nvme_dev *dev,
 		struct bio_vec *bv)
 {
 	struct nvme_iod *iod = blk_mq_rq_to_pdu(req);
-
+	//zhengxd: pass bv(page, offset, len)
 	iod->first_dma = dma_map_bvec(dev->dev, bv, rq_dma_dir(req), 0);
 	if (dma_mapping_error(dev->dev, iod->first_dma))
 		return BLK_STS_RESOURCE;
@@ -835,6 +835,7 @@ static blk_status_t nvme_setup_sgl_simple(struct nvme_dev *dev,
 
 	cmnd->flags = NVME_CMD_SGL_METABUF;
 	cmnd->dptr.sgl.addr = cpu_to_le64(iod->first_dma);
+	//zhengxd: in x2rp: cmnd->dptr.sgl.length >= cnmd->length
 	cmnd->dptr.sgl.length = cpu_to_le32(iod->dma_len);
 	cmnd->dptr.sgl.type = NVME_SGL_FMT_DATA_DESC << 4;
 	return BLK_STS_OK;
@@ -846,11 +847,17 @@ static blk_status_t nvme_map_data(struct nvme_dev *dev, struct request *req,
 	struct nvme_iod *iod = blk_mq_rq_to_pdu(req);
 	blk_status_t ret = BLK_STS_RESOURCE;
 	int nr_mapped;
-
+	//zhengxd: in v1.0, all reqs have only one segment
 	if (blk_rq_nr_phys_segments(req) == 1) {
 		struct bio_vec bv = req_bvec(req);
 
 		if (!is_pci_p2pdma_page(bv.bv_page)) {
+			//zhengxd: x2rp use sgl map
+			if (iod->nvmeq->qid &&
+			    dev->ctrl.sgls & ((1 << 0) | (1 << 1)) && req->bio->xrp_enabled)
+				return nvme_setup_sgl_simple(dev, req,
+							     &cmnd->rw, &bv);
+
 			if (bv.bv_offset + bv.bv_len <= NVME_CTRL_PAGE_SIZE * 2)
 				return nvme_setup_prp_simple(dev, req,
 							     &cmnd->rw, &bv);
@@ -912,6 +919,7 @@ static blk_status_t nvme_map_metadata(struct nvme_dev *dev, struct request *req,
 /*
  * NOTE: ns is NULL when called on the admin queue.
  */
+//zhengxd: driver entry
 static blk_status_t nvme_queue_rq(struct blk_mq_hw_ctx *hctx,
 			 const struct blk_mq_queue_data *bd)
 {
@@ -947,11 +955,11 @@ static blk_status_t nvme_queue_rq(struct blk_mq_hw_ctx *hctx,
 	 */
 	if (unlikely(!test_bit(NVMEQ_ENABLED, &nvmeq->flags)))
 		return BLK_STS_IOERR;
-
+	// zhengxd: init slba、length 
 	ret = nvme_setup_cmd(ns, req, cmndp);
 	if (ret)
 		return ret;
-
+	// zhengxd: use sgl map
 	if (blk_rq_nr_phys_segments(req)) {
 		ret = nvme_map_data(dev, req, cmndp);
 		if (ret)
@@ -965,6 +973,7 @@ static blk_status_t nvme_queue_rq(struct blk_mq_hw_ctx *hctx,
 	}
 
 	blk_mq_start_request(req);
+	//zhengxd: submit cmnd
 	nvme_submit_cmd(nvmeq, cmndp, bd->last);
 	return BLK_STS_OK;
 out_unmap_data:
@@ -1028,6 +1037,7 @@ extern atomic_long_t xrp_resubmit_level_count;
 extern atomic_long_t xrp_extent_lookup_time;
 extern atomic_long_t xrp_extent_lookup_count;
 
+//zhengxd: process cqe, and submit another sqe;
 static inline void nvme_handle_cqe(struct nvme_queue *nvmeq, u16 idx)
 {
 	struct nvme_completion *cqe = &nvmeq->cqes[idx];
@@ -1100,6 +1110,8 @@ static inline void nvme_handle_cqe(struct nvme_queue *nvmeq, u16 idx)
 		}
 
 		memset(&ebpf_context, 0, sizeof(struct bpf_xrp_kern));
+		//zhengxd: x2rp doesn't need access data, x2rp only submit req,
+		// but we've kept the interface
 		ebpf_context.data = page_address(bio_page(req->bio));
 		ebpf_context.scratch = page_address(req->bio->xrp_scratch_page);
 		ebpf_start = ktime_get();
@@ -1121,6 +1133,7 @@ static inline void nvme_handle_cqe(struct nvme_queue *nvmeq, u16 idx)
 				nvme_pci_complete_rq(req);
 			return;
 		}
+		//zhengxd: end flag
 		if (ebpf_context.done) {
 			/* finish traversal */
 			atomic_long_add(ktime_sub(ktime_get(), resubmit_start), &xrp_resubmit_leaf_time);
@@ -1133,7 +1146,9 @@ static inline void nvme_handle_cqe(struct nvme_queue *nvmeq, u16 idx)
 		}
 		/* address mapping */
 		file_offset = ebpf_context.next_addr[0];
-		data_len = 512;
+		//zhengxd: in x2rp, data len is 512, but in x2rp datalen is variable
+		// data_len = 512;
+		data_len = ebpf_context.next_addr[1];
 		// FIXME: support variable data_len and more than one next_addr
 		req->bio->xrp_file_offset = file_offset;
 		if (req->bio->xrp_inode->i_op == &ext4_file_inode_operations) {
@@ -1160,8 +1175,9 @@ static inline void nvme_handle_cqe(struct nvme_queue *nvmeq, u16 idx)
 		req->bio->bi_iter.bi_sector = (disk_offset >> 9) + req->bio->xrp_partition_start_sector;
 		req->__sector = req->bio->bi_iter.bi_sector;
 		req->xrp_command->rw.slba = cpu_to_le64(nvme_sect_to_lba(req->q->queuedata, blk_rq_pos(req)));
-		//重新赋值prp，但是更改addr后，unmap的时候可能会存在问题。
-		// req->xrp_command->rw.dptr
+		//zhengxd: init sgl.addr 和 rw.length
+		req->xrp_command->rw.dptr.sgl.addr += req->xrp_command->rw.length;
+		req->xrp_command->rw.length = data_len;
 		atomic_long_add(ktime_sub(ktime_get(), resubmit_start), &xrp_resubmit_int_time);
 		atomic_long_inc(&xrp_resubmit_int_count);
 		nvme_submit_cmd(nvmeq, req->xrp_command, true);

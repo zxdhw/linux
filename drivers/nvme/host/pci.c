@@ -1148,7 +1148,7 @@ static inline void nvme_handle_cqe(struct nvme_queue *nvmeq, u16 idx)
 		file_offset = ebpf_context.next_addr[0];
 		//zhengxd: in x2rp, data len is 512, but in x2rp datalen is variable
 		// data_len = 512;
-		data_len = ebpf_context.next_addr[1];
+		data_len = ebpf_context.size[0];
 		// FIXME: support variable data_len and more than one next_addr
 		req->bio->xrp_file_offset = file_offset;
 		if (req->bio->xrp_inode->i_op == &ext4_file_inode_operations) {

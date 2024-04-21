@@ -58,6 +58,7 @@ endef
 define make
   @$(MAKE) -f Makefile.perf --no-print-directory -j$(JOBS) O=$(FULL_O) $(SET_DEBUG) $@
 endef
+# @$(MAKE) -f Makefile.perf --no-print-directory -j$(JOBS) O=$(FULL_O) $(SET_DEBUG) CFLAGS="-Wno-error=pointer-compare -I/usr/src/linux-headers-$(shell uname -r)/include" $@
 
 #
 # Needed if no target specified:

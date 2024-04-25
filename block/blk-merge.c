@@ -253,29 +253,50 @@ static struct bio *blk_bio_segment_split(struct request_queue *q,
 	const unsigned max_sectors = get_max_io_size(q, bio);
 	const unsigned max_segs = queue_max_segments(q);
 
-	bio_for_each_bvec(bv, bio, iter) {
-		/*
-		 * If the queue doesn't support SG gaps and adding this
-		 * offset would create a gap, disallow it.
-		 */
-		if (bvprvp && bvec_gap_to_prev(q, bvprvp, bv.bv_offset))
-			goto split;
+	if(bio->xrp_enabled){
+		bio_for_each_bvec_xrp(bv, bio, iter) {
 
-		if (nsegs < max_segs &&
-		    sectors + (bv.bv_len >> 9) <= max_sectors &&
-		    bv.bv_offset + bv.bv_len <= PAGE_SIZE) {
-			nsegs++;
-			sectors += bv.bv_len >> 9;
-		} else if (bvec_split_segs(q, &bv, &nsegs, &sectors, max_segs,
-					 max_sectors)) {
-			goto split;
+			printk("----bio nsegs is %d, max_sectors is %d-----\n", nsegs, max_sectors);
+			printk("----bio max segs is %d-----\n", max_segs);
+			printk("----bio bv.bv_offset is %d, bv.bv_len is %d-----\n", bv.bv_offset,bv.bv_len);
+			
+			//zhengxd: max_sectors: 2560
+			if ( (nsegs < max_segs) && (sectors + (bv.bv_len >> 9) <= max_sectors)) {
+				nsegs++;
+				sectors += bv.bv_len >> 9;
+			} else {
+				printk("----bio segments error: bio nsegs is %d, sectors is %d-----\n", nsegs, sectors);
+			}
 		}
+	} else {
+		bio_for_each_bvec(bv, bio, iter) {
+			/*
+			* If the queue doesn't support SG gaps and adding this
+			* offset would create a gap, disallow it.
+			*/
+			if (bvprvp && bvec_gap_to_prev(q, bvprvp, bv.bv_offset))
+				goto split;
+			//zhengxd: max_sectors: 2560
+			if (nsegs < max_segs &&
+				sectors + (bv.bv_len >> 9) <= max_sectors &&
+				bv.bv_offset + bv.bv_len <= PAGE_SIZE) {
 
-		bvprv = bv;
-		bvprvp = &bvprv;
+				nsegs++;
+				sectors += bv.bv_len >> 9;
+			} else if (bvec_split_segs(q, &bv, &nsegs, &sectors, max_segs,
+						max_sectors)) {
+				goto split;
+			}
+
+			bvprv = bv;
+			bvprvp = &bvprv;
+		}
 	}
-
+	
 	*segs = nsegs;
+	if(bio->xrp_enabled){
+		printk("----bio nsegs is %d-----\n", nsegs);
+	}
 	return NULL;
 split:
 	*segs = nsegs;
@@ -493,30 +514,48 @@ static int __blk_bios_map_sg(struct request_queue *q, struct bio *bio,
 	int nsegs = 0;
 	bool new_bio = false;
 
-	for_each_bio(bio) {
-		bio_for_each_bvec(bvec, bio, iter) {
-			/*
-			 * Only try to merge bvecs from two bios given we
-			 * have done bio internal merge when adding pages
-			 * to bio
-			 */
-			if (new_bio &&
-			    __blk_segment_map_sg_merge(q, &bvec, &bvprv, sg))
-				goto next_bvec;
-
-			if (bvec.bv_offset + bvec.bv_len <= PAGE_SIZE)
-				nsegs += __blk_bvec_map_sg(bvec, sglist, sg);
-			else
-				nsegs += blk_bvec_map_sg(q, &bvec, sglist, sg);
- next_bvec:
-			new_bio = false;
+	if(bio->xrp_enabled){
+		for_each_bio(bio) {
+			bio_for_each_bvec_xrp(bvec, bio, iter) {
+	
+				if (bvec.bv_offset + bvec.bv_len <= PAGE_SIZE){
+					nsegs += __blk_bvec_map_sg(bvec, sglist, sg);
+					printk("----sgl map single:  sglist length is%d, offset is %d----\n",(*sg)->length,(*sg)->offset);
+				} else{
+					nsegs += blk_bvec_map_sg(q, &bvec, sglist, sg);
+					printk("----sgl map multi:  sglist length is%d, offset is %d----\n",(*sg)->length,(*sg)->offset);
+				}
+				printk("----sgl map: nsegs is %d, bvlen is %d----\n",nsegs,bvec.bv_len);
+			}
 		}
-		if (likely(bio->bi_iter.bi_size)) {
-			bvprv = bvec;
-			new_bio = true;
+	} else {
+		for_each_bio(bio) {
+			bio_for_each_bvec(bvec, bio, iter) {
+				/*
+				* Only try to merge bvecs from two bios given we
+				* have done bio internal merge when adding pages
+				* to bio
+				*/
+				if (new_bio &&
+					__blk_segment_map_sg_merge(q, &bvec, &bvprv, sg))
+					goto next_bvec;
+
+				if (bvec.bv_offset + bvec.bv_len <= PAGE_SIZE)
+					nsegs += __blk_bvec_map_sg(bvec, sglist, sg);
+				else
+					nsegs += blk_bvec_map_sg(q, &bvec, sglist, sg);
+				if(bio->xrp_enabled){
+					printk("----sgl map: nsegs is %d, bvlen is %d----\n",nsegs,bvec.bv_len);
+				}
+	next_bvec:
+				new_bio = false;
+			}
+			if (likely(bio->bi_iter.bi_size)) {
+				bvprv = bvec;
+				new_bio = true;
+			}
 		}
 	}
-
 	return nsegs;
 }
 

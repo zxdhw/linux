@@ -280,6 +280,7 @@ struct bio {
 	struct inode		*xrp_inode;
 	u64			xrp_partition_start_sector;
 	int			xrp_count;
+	int			xrp_buffer_size;
 	struct page		*xrp_scratch_page;
 	struct bpf_prog		*xrp_bpf_prog;
 	u64			xrp_extent_version;

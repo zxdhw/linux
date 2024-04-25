@@ -2170,9 +2170,9 @@ blk_qc_t blk_mq_submit_bio(struct bio *bio)
 	blk_qc_t cookie;
 	blk_status_t ret;
 	bool hipri;
-
+	
 	blk_queue_bounce(q, &bio);
-	//zhengxd: if(bio > 128KB || segments > 33) 
+	//zhengxd: if(bio > 128KB || segments >= 33) 
 	__blk_queue_split(&bio, &nr_segs);
 
 	if (!bio_integrity_prep(bio))
@@ -2181,7 +2181,6 @@ blk_qc_t blk_mq_submit_bio(struct bio *bio)
 	if (!is_flush_fua && !blk_queue_nomerges(q) &&
 	    blk_attempt_plug_merge(q, bio, nr_segs, &same_queue_rq))
 		goto queue_exit;
-
 	if (blk_mq_sched_bio_merge(q, bio, nr_segs))
 		goto queue_exit;
 
@@ -2198,7 +2197,6 @@ blk_qc_t blk_mq_submit_bio(struct bio *bio)
 			bio_wouldblock_error(bio);
 		goto queue_exit;
 	}
-
 	trace_block_getrq(bio);
 
 	rq_qos_track(q, rq, bio);
@@ -2206,7 +2204,6 @@ blk_qc_t blk_mq_submit_bio(struct bio *bio)
 	cookie = request_to_qc_t(data.hctx, rq);
 	//zhengxd: bio -> req
 	blk_mq_bio_to_request(rq, bio, nr_segs);
-
 	ret = blk_crypto_init_request(rq);
 	if (ret != BLK_STS_OK) {
 		bio->bi_status = ret;
@@ -2232,7 +2229,6 @@ blk_qc_t blk_mq_submit_bio(struct bio *bio)
 		 */
 		unsigned int request_count = plug->rq_count;
 		struct request *last = NULL;
-
 		if (!request_count)
 			trace_block_plug(q);
 		else

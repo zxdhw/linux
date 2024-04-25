@@ -838,7 +838,11 @@ static inline blk_status_t nvme_setup_rw(struct nvme_ns *ns,
 	// zhengxd: rq->__sector <=  bio->bi_iter.bi_sector <= iocb->ki_pos
 	cmnd->rw.slba = cpu_to_le64(nvme_sect_to_lba(ns, blk_rq_pos(req)));
 	// zhengxd: rq->__data_len <= bio->bi_iter.bi_size <= iocb->x2rp_data_len
+	// zhengxd: length (per sector)
 	cmnd->rw.length = cpu_to_le16((blk_rq_bytes(req) >> ns->lba_shift) - 1);
+	if(req->bio->xrp_enabled){
+		printk("----rw.length is %d----\n",cmnd->rw.length);
+	}
 
 	if (req_op(req) == REQ_OP_WRITE && ctrl->nr_streams)
 		nvme_assign_write_stream(ctrl, req, &control, &dsmgmt);
@@ -3126,6 +3130,7 @@ int nvme_init_identify(struct nvme_ctrl *ctrl)
 
 	nvme_set_queue_limits(ctrl, ctrl->admin_q);
 	ctrl->sgls = le32_to_cpu(id->sgls);
+	printk("----nvme 1: sgls is %d\n-----", ctrl->sgls);
 	ctrl->kas = le16_to_cpu(id->kas);
 	ctrl->max_namespaces = le32_to_cpu(id->mnan);
 	ctrl->ctratt = le32_to_cpu(id->ctratt);

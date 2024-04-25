@@ -811,8 +811,10 @@ static noinline_for_stack bool submit_bio_checks(struct bio *bio)
 	 * For a REQ_NOWAIT based request, return -EOPNOTSUPP
 	 * if queue does not support NOWAIT.
 	 */
-	if ((bio->bi_opf & REQ_NOWAIT) && !blk_queue_nowait(q))
+	if ((bio->bi_opf & REQ_NOWAIT) && !blk_queue_nowait(q)) {
+		printk("-----not_supported 1-----\n");
 		goto not_supported;
+	}
 
 	if (should_fail_bio(bio))
 		goto end_io;
@@ -843,16 +845,22 @@ static noinline_for_stack bool submit_bio_checks(struct bio *bio)
 
 	switch (bio_op(bio)) {
 	case REQ_OP_DISCARD:
-		if (!blk_queue_discard(q))
+		if (!blk_queue_discard(q)) {
+			printk("-----not_supported 2-----\n");
 			goto not_supported;
+		}
 		break;
 	case REQ_OP_SECURE_ERASE:
-		if (!blk_queue_secure_erase(q))
+		if (!blk_queue_secure_erase(q)){
+			printk("-----not_supported 3-----\n");
 			goto not_supported;
+		}
 		break;
 	case REQ_OP_WRITE_SAME:
-		if (!q->limits.max_write_same_sectors)
+		if (!q->limits.max_write_same_sectors){
+			printk("-----not_supported 4-----\n");
 			goto not_supported;
+		}
 		break;
 	case REQ_OP_ZONE_APPEND:
 		status = blk_check_zone_append(q, bio);
@@ -1012,7 +1020,6 @@ static blk_qc_t __submit_bio_noacct_mq(struct bio *bio)
 			ret = BLK_QC_T_NONE;
 			continue;
 		}
-
 		ret = blk_mq_submit_bio(bio);
 	} while ((bio = bio_list_pop(&bio_list[0])));
 
@@ -1069,7 +1076,10 @@ blk_qc_t submit_bio(struct bio *bio)
 {
 	if (blkcg_punt_bio_submit(bio))
 		return BLK_QC_T_NONE;
-
+	
+	if(bio->xrp_enabled){
+		printk("----block 0: submit_bio: bio_bv_len 1 is: %d----\n",bio->bi_io_vec->bv_len);
+	}
 	/*
 	 * If it's a regular read/write or a barrier with data attached,
 	 * go through the normal accounting stuff before submission.
@@ -1117,7 +1127,6 @@ blk_qc_t submit_bio(struct bio *bio)
 
 		return ret;
 	}
-
 	return submit_bio_noacct(bio);
 }
 EXPORT_SYMBOL(submit_bio);
@@ -1441,16 +1450,24 @@ bool blk_update_request(struct request *req, blk_status_t error,
 #endif
 
 	if (unlikely(error && !blk_rq_is_passthrough(req) &&
-		     !(req->rq_flags & RQF_QUIET)))
+		     !(req->rq_flags & RQF_QUIET))){
+		if(req->bio->xrp_enabled){
+			printk("----blk_update_request: error 1----\n");
+		}
 		print_req_error(req, error, __func__);
-
+	}
+	if(req->bio->xrp_enabled){
+		printk("----blk_update_request: nr_bytes is %d----\n", nr_bytes);
+	}
 	blk_account_io_completion(req, nr_bytes);
 
 	total_bytes = 0;
 	while (req->bio) {
 		struct bio *bio = req->bio;
 		unsigned bio_bytes = min(bio->bi_iter.bi_size, nr_bytes);
-
+		if(req->bio->xrp_enabled){
+			printk("----blk_update_request: nr_bytes is %d,bio_bytes is %d, bi size is %d----\n", nr_bytes,bio_bytes,bio->bi_iter.bi_size);
+		}
 		if (bio_bytes == bio->bi_iter.bi_size)
 			req->bio = bio->bi_next;
 

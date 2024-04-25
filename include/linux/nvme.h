@@ -7,6 +7,7 @@
 #ifndef _LINUX_NVME_H
 #define _LINUX_NVME_H
 
+#include "asm-generic/int-ll64.h"
 #include <linux/types.h>
 #include <linux/uuid.h>
 

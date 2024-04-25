@@ -2144,6 +2144,7 @@ SYSCALL_DEFINE5(io_submit_xrp, aio_context_t, ctx_id, long, nr, struct iocb __us
 	for (i = 0; i < nr; i++) {
 		// zhengxd: every aio req has a scratch_buf, like __user* iocb
 		char __user * scratch_buf;
+		//zhengxd: scratch size : 4096(char: 1 bytes )
 		if (unlikely(get_user(scratch_buf, scratch_bufs + i))) {
 			ret = -EFAULT;
 			break;

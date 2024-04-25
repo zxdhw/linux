@@ -697,15 +697,16 @@ static inline bool page_is_mergeable(const struct bio_vec *bv,
 	size_t bv_end = bv->bv_offset + bv->bv_len;
 	phys_addr_t vec_end_addr = page_to_phys(bv->bv_page) + bv_end - 1;
 	phys_addr_t page_addr = page_to_phys(page);
-
+	//zhengxd: Check whether the physical addresses are contiguous 
 	if (vec_end_addr + 1 != page_addr + off)
 		return false;
 	if (xen_domain() && !xen_biovec_phys_mergeable(bv, page))
 		return false;
-
+	//zhengxd： Check whether the same physical addresses 
 	*same_page = ((vec_end_addr & PAGE_MASK) == page_addr);
 	if (*same_page)
 		return true;
+	// zhengxd： Check whether the page addresses are contiguous 
 	return (bv->bv_page + bv_end / PAGE_SIZE) == (page + off / PAGE_SIZE);
 }
 
@@ -864,14 +865,13 @@ bool __bio_try_merge_page(struct bio *bio, struct page *page,
 
 	if (bio->bi_vcnt > 0) {
 		struct bio_vec *bv = &bio->bi_io_vec[bio->bi_vcnt - 1];
-
 		if (page_is_mergeable(bv, page, len, off, same_page)) {
 			if (bio->bi_iter.bi_size > UINT_MAX - len) {
 				*same_page = false;
 				return false;
 			}
 			bv->bv_len += len;
-			bio->bi_iter.bi_size += len;
+			if(!bio->xrp_enabled) bio->bi_iter.bi_size += len;
 			return true;
 		}
 	}
@@ -904,6 +904,10 @@ void __bio_add_page(struct bio *bio, struct page *page,
 	//zhengxd: bi_size init with dataszie instead of buffer len
 	if(!bio->xrp_enabled) bio->bi_iter.bi_size += len;
 	bio->bi_vcnt++;
+
+	if(bio->xrp_enabled){
+		printk("----iomap 2: vcnt is %d, bv_len is %d, bv offset is %d-----\n", bio->bi_vcnt,bv->bv_len,bv->bv_offset);
+	}
 
 	if (!bio_flagged(bio, BIO_WORKINGSET) && unlikely(PageWorkingset(page)))
 		bio_set_flag(bio, BIO_WORKINGSET);
@@ -1012,6 +1016,9 @@ static int __bio_iov_iter_get_pages(struct bio *bio, struct iov_iter *iter)
 	pages += entries_left * (PAGE_PTRS_PER_BVEC - 1);
 
 	size = iov_iter_get_pages(iter, pages, LONG_MAX, nr_pages, &offset);
+	if(bio->xrp_enabled){
+		printk("----iomap 0: all bv size is %ld-----\n", size);
+	}
 	if (unlikely(size <= 0))
 		return size ? size : -EFAULT;
 
@@ -1019,8 +1026,17 @@ static int __bio_iov_iter_get_pages(struct bio *bio, struct iov_iter *iter)
 		struct page *page = pages[i];
 
 		len = min_t(size_t, PAGE_SIZE - offset, left);
-		// zhengxd: smaller than pegesize(4K)
-		if (__bio_try_merge_page(bio, page, len, offset, &same_page)) {
+		// zhengxd: Consecutive physical pages(not page address)
+		if(bio->xrp_enabled){
+			if (WARN_ON_ONCE(bio_full(bio, len)))
+                return -EINVAL;
+			//zhengxd: modify bio->bi_iter.bi_size
+			__bio_add_page(bio, page, len, offset);
+			
+		} else if (__bio_try_merge_page(bio, page, len, offset, &same_page)) {
+			if(bio->xrp_enabled){
+				printk("----iomap 1: try merge-----\n");
+			}
 			if (same_page)
 				put_page(page);
 		} else {
@@ -1031,7 +1047,6 @@ static int __bio_iov_iter_get_pages(struct bio *bio, struct iov_iter *iter)
 		}
 		offset = 0;
 	}
-
 	iov_iter_advance(iter, size);
 	return 0;
 }

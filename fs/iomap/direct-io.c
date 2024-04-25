@@ -3,6 +3,8 @@
  * Copyright (C) 2010 Red Hat, Inc.
  * Copyright (c) 2016-2018 Christoph Hellwig.
  */
+#include "linux/mm.h"
+#include "linux/printk.h"
 #include <linux/module.h>
 #include <linux/compiler.h>
 #include <linux/fs.h>
@@ -329,8 +331,12 @@ iomap_dio_bio_actor(struct inode *inode, loff_t pos, loff_t length,
 		bio->xrp_inode = dio->iocb->ki_filp->f_inode;
 		bio->xrp_partition_start_sector = 0;
 		bio->xrp_count = 1;
-
+		bio->xrp_buffer_size = nr_pages;
+		if(bio->xrp_enabled) {
+			printk("----enter iomap 0----\n");
+		}
 		ret = bio_iov_iter_get_pages(bio, dio->submit.iter);
+
 		if (unlikely(ret)) {
 			/*
 			 * We have to stop part way through an IO. We must fall
@@ -366,7 +372,7 @@ iomap_dio_bio_actor(struct inode *inode, loff_t pos, loff_t length,
 				bio->xrp_enabled = false;
 			}
 		}
-		//zhengxd: mutli segments produce  error
+		//zhengxd: nr_pages > 256 (error)
 		n = bio->bi_iter.bi_size;
 		if (dio->flags & IOMAP_DIO_WRITE) {
 			task_io_account_write(n);
@@ -382,6 +388,9 @@ iomap_dio_bio_actor(struct inode *inode, loff_t pos, loff_t length,
 						 BIO_MAX_VECS);
 		iomap_dio_submit_bio(dio, iomap, bio, pos);
 		pos += n;
+		if(bio->xrp_enabled){
+			printk("----nr_pages is %d----\n",nr_pages);
+		}
 	} while (nr_pages);
 
 	/*

@@ -150,7 +150,7 @@ dma_addr_t dma_map_page_attrs(struct device *dev, struct page *page,
 
 	if (WARN_ON_ONCE(!dev->dma_mask))
 		return DMA_MAPPING_ERROR;
-
+	//zhengxd：find no nvme dma_map_ops
 	if (dma_map_direct(dev, ops) ||
 	    arch_dma_map_page_direct(dev, page_to_phys(page) + offset + size))
 		addr = dma_direct_map_page(dev, page, offset, size, dir, attrs);

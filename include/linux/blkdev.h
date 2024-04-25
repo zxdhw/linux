@@ -1055,6 +1055,9 @@ static inline struct bio_vec req_bvec(struct request *rq)
 {
 	if (rq->rq_flags & RQF_SPECIAL_PAYLOAD)
 		return rq->special_vec;
+	if(rq->bio->xrp_enabled){
+		return mp_bvec_iter_bvec_xrp(rq->bio->bi_io_vec, rq->bio->bi_iter);
+	}
 	return mp_bvec_iter_bvec(rq->bio->bi_io_vec, rq->bio->bi_iter);
 }
 

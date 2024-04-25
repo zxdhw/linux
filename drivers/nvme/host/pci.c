@@ -4,6 +4,7 @@
  * Copyright (c) 2011-2014, Intel Corporation.
  */
 
+#include "linux/nvme.h"
 #include <linux/acpi.h>
 #include <linux/aer.h>
 #include <linux/async.h>
@@ -537,12 +538,25 @@ static inline bool nvme_pci_use_sgls(struct nvme_dev *dev, struct request *req)
 
 	avg_seg_size = DIV_ROUND_UP(blk_rq_payload_bytes(req), nseg);
 
-	if (!(dev->ctrl.sgls & ((1 << 0) | (1 << 1))))
+	if (!(dev->ctrl.sgls & ((1 << 0) | (1 << 1)))){
+		if(req->bio->xrp_enabled){
+			printk("---use_sgls: sgls is false ----\n");
+		}
 		return false;
-	if (!iod->nvmeq->qid)
+	}
+	if (!iod->nvmeq->qid){
+		if(req->bio->xrp_enabled){
+			printk("---use_sgls: queueid is 0 ----\n");
+		}
 		return false;
-	if (!sgl_threshold || avg_seg_size < sgl_threshold)
+	}
+	//zhengxd: sgl_threshold: 32K
+	if (!sgl_threshold || avg_seg_size < sgl_threshold){
+		if(req->bio->xrp_enabled){
+			printk("---use_sgls: sgl threshold is %d, avg_seg_size is %d----\n",sgl_threshold,avg_seg_size);
+		}
 		return false;
+	}
 	return true;
 }
 
@@ -602,7 +616,9 @@ static void nvme_unmap_data(struct nvme_dev *dev, struct request *req)
 	}
 
 	WARN_ON_ONCE(!iod->nents);
-
+	if(req->bio->xrp_enabled){
+		printk("----nvme_unmap: iod->page is %d, iod->use_sgl is %d----\n", iod->npages, iod->use_sgl);
+	}
 	nvme_unmap_sg(dev, req);
 	if (iod->npages == 0)
 		dma_pool_free(dev->prp_small_pool, nvme_pci_iod_list(req)[0],
@@ -634,6 +650,10 @@ static blk_status_t nvme_pci_setup_prps(struct nvme_dev *dev,
 	struct nvme_iod *iod = blk_mq_rq_to_pdu(req);
 	struct dma_pool *pool;
 	int length = blk_rq_payload_bytes(req);
+	if(req->bio->xrp_enabled){
+		length = req->bio->xrp_buffer_size * NVME_CTRL_PAGE_SIZE;
+		printk("----prp map : length is %d----\n",length);
+	}
 	struct scatterlist *sg = iod->sg;
 	int dma_len = sg_dma_len(sg);
 	u64 dma_addr = sg_dma_address(sg);
@@ -758,7 +778,7 @@ static blk_status_t nvme_pci_setup_sgls(struct nvme_dev *dev,
 		nvme_pci_sgl_set_data(&cmd->dptr.sgl, sg);
 		return BLK_STS_OK;
 	}
-
+	//zhengxd: entries <= 16 : sizeof(struct nvme_sgl_desc) = 16
 	if (entries <= (256 / sizeof(struct nvme_sgl_desc))) {
 		pool = dev->prp_small_pool;
 		iod->npages = 0;
@@ -772,7 +792,7 @@ static blk_status_t nvme_pci_setup_sgls(struct nvme_dev *dev,
 		iod->npages = -1;
 		return BLK_STS_RESOURCE;
 	}
-
+	//zhengxd: sglist number
 	nvme_pci_iod_list(req)[0] = sg_list;
 	iod->first_dma = sgl_dma;
 
@@ -792,8 +812,14 @@ static blk_status_t nvme_pci_setup_sgls(struct nvme_dev *dev,
 			sg_list[i++] = *link;
 			nvme_pci_sgl_set_seg(link, sgl_dma, entries);
 		}
-
+		//zhengxd: in x2rp v1.0, one page is enough(< 256 segments)
 		nvme_pci_sgl_set_data(&sg_list[i++], sg);
+		if(req->bio->xrp_enabled){
+			printk("----nvme_setup_sgl: sglist is: %d----\n",i);
+			printk("----nvme_setup_sgl: sg addr is %llu, sg length is %d----",cpu_to_le64(sg_dma_address(sg)),cpu_to_le32(sg_dma_len(sg)) );
+			printk("----nvme_setup_sgl: sg list addr is %llu, sg list length is %d----",sg_list[i-1].addr,sg_list[i-1].length);
+		}
+
 		sg = sg_next(sg);
 	} while (--entries > 0);
 
@@ -835,8 +861,14 @@ static blk_status_t nvme_setup_sgl_simple(struct nvme_dev *dev,
 
 	cmnd->flags = NVME_CMD_SGL_METABUF;
 	cmnd->dptr.sgl.addr = cpu_to_le64(iod->first_dma);
+	if(req->bio->xrp_enabled){
+		printk("sgl map: before to le64: rw.dptr.sgl.addr is %llu\n", iod->first_dma);
+	}
 	//zhengxd: in x2rp: cmnd->dptr.sgl.length >= cnmd->length
 	cmnd->dptr.sgl.length = cpu_to_le32(iod->dma_len);
+	if(req->bio->xrp_enabled){
+		printk("sgl map simple: iod->dma_len is %d\n", iod->dma_len);
+	}
 	cmnd->dptr.sgl.type = NVME_SGL_FMT_DATA_DESC << 4;
 	return BLK_STS_OK;
 }
@@ -847,18 +879,23 @@ static blk_status_t nvme_map_data(struct nvme_dev *dev, struct request *req,
 	struct nvme_iod *iod = blk_mq_rq_to_pdu(req);
 	blk_status_t ret = BLK_STS_RESOURCE;
 	int nr_mapped;
-	//zhengxd: in v1.0, all reqs have only one segment
+	//zhengxd: check segments number
+	if(req->bio->xrp_enabled){
+		printk("----nvme_map_data: segments is: %d----\n",blk_rq_nr_phys_segments(req));
+	}
 	if (blk_rq_nr_phys_segments(req) == 1) {
+		//zhengxd: align bio_vec && bvec_iter
 		struct bio_vec bv = req_bvec(req);
-
 		if (!is_pci_p2pdma_page(bv.bv_page)) {
 			//zhengxd: x2rp use sgl map
-			if (iod->nvmeq->qid &&
-			    dev->ctrl.sgls & ((1 << 0) | (1 << 1)) && req->bio->xrp_enabled)
+			if (req->bio->xrp_enabled) {
+				printk("---nvme_map_data: qid is: %d, ctrl.sgls is %d----\n",iod->nvmeq->qid,dev->ctrl.sgls);
+				printk("---nvme_map_data: bv_len is: %d----\n",bv.bv_len);
 				return nvme_setup_sgl_simple(dev, req,
 							     &cmnd->rw, &bv);
-
+			}
 			if (bv.bv_offset + bv.bv_len <= NVME_CTRL_PAGE_SIZE * 2)
+				
 				return nvme_setup_prp_simple(dev, req,
 							     &cmnd->rw, &bv);
 
@@ -868,11 +905,11 @@ static blk_status_t nvme_map_data(struct nvme_dev *dev, struct request *req,
 							     &cmnd->rw, &bv);
 		}
 	}
-
 	iod->dma_len = 0;
 	iod->sg = mempool_alloc(dev->iod_mempool, GFP_ATOMIC);
 	if (!iod->sg)
 		return BLK_STS_RESOURCE;
+	//zhengxd: nents = phy segments = bio vcnt
 	sg_init_table(iod->sg, blk_rq_nr_phys_segments(req));
 	iod->nents = blk_rq_map_sg(req->q, req, iod->sg);
 	if (!iod->nents)
@@ -888,10 +925,16 @@ static blk_status_t nvme_map_data(struct nvme_dev *dev, struct request *req,
 		goto out_free_sg;
 
 	iod->use_sgl = nvme_pci_use_sgls(dev, req);
-	if (iod->use_sgl)
+	if(req->bio->xrp_enabled){
+		printk("---nvme_map_data: usesgl is: %d----\n",iod->use_sgl);
+		iod->use_sgl = true;
 		ret = nvme_pci_setup_sgls(dev, req, &cmnd->rw, nr_mapped);
-	else
+		printk("---nvme_map_data: nr_mapped is %d,ret is: %d----\n",nr_mapped,ret);
+	} else if (iod->use_sgl) {
+		ret = nvme_pci_setup_sgls(dev, req, &cmnd->rw, nr_mapped);
+	} else {
 		ret = nvme_pci_setup_prps(dev, req, &cmnd->rw);
+	}
 	if (ret != BLK_STS_OK)
 		goto out_unmap_sg;
 	return BLK_STS_OK;
@@ -971,9 +1014,12 @@ static blk_status_t nvme_queue_rq(struct blk_mq_hw_ctx *hctx,
 		if (ret)
 			goto out_unmap_data;
 	}
-
+	//zhengxd: submit cmnd (nvme queue rq error)
+	// if(req->bio->xrp_enabled){
+	// 	printk("----nvme_submit_cmd----\n");
+	// }
 	blk_mq_start_request(req);
-	//zhengxd: submit cmnd
+
 	nvme_submit_cmd(nvmeq, cmndp, bd->last);
 	return BLK_STS_OK;
 out_unmap_data:
@@ -1083,11 +1129,19 @@ static inline void nvme_handle_cqe(struct nvme_queue *nvmeq, u16 idx)
 		struct xrp_mapping mapping;
 		ktime_t extent_lookup_start;
 
+		memset(&ebpf_context, 0, sizeof(struct bpf_xrp_kern));
+		//zhengxd: x2rp doesn't need access data, x2rp only submit req,
+		// but we've kept the interface
+		ebpf_context.data = page_address(bio_page(req->bio));
+		ebpf_context.scratch = page_address(req->bio->xrp_scratch_page);
+
 		/* verify version number */
 		if (req->bio->xrp_count > 1
 		    && req->bio->xrp_inode->i_op == &ext4_file_inode_operations) {
 			file_offset = req->bio->xrp_file_offset;
-			data_len = 512;
+			// data_len = 512;
+			// zhengxd: need to support variable data_len
+			data_len = (req->xrp_command->rw.length + 1) << 9;
 
 			extent_lookup_start = ktime_get();
 			xrp_retrieve_mapping(req->bio->xrp_inode, file_offset, data_len, &mapping);
@@ -1109,11 +1163,6 @@ static inline void nvme_handle_cqe(struct nvme_queue *nvmeq, u16 idx)
 			}
 		}
 
-		memset(&ebpf_context, 0, sizeof(struct bpf_xrp_kern));
-		//zhengxd: x2rp doesn't need access data, x2rp only submit req,
-		// but we've kept the interface
-		ebpf_context.data = page_address(bio_page(req->bio));
-		ebpf_context.scratch = page_address(req->bio->xrp_scratch_page);
 		ebpf_start = ktime_get();
 		ebpf_prog = req->bio->xrp_bpf_prog;
 		ebpf_return = BPF_PROG_RUN(ebpf_prog, &ebpf_context);
@@ -1146,18 +1195,20 @@ static inline void nvme_handle_cqe(struct nvme_queue *nvmeq, u16 idx)
 		}
 		/* address mapping */
 		file_offset = ebpf_context.next_addr[0];
-		//zhengxd: in x2rp, data len is 512, but in x2rp datalen is variable
+		printk("nvme_handle_cqe: ebpf file addr is  %llu\n", file_offset);
+		//zhengxd: in xrp, data len is 512, but in x2rp datalen is variable
 		// data_len = 512;
 		data_len = ebpf_context.size[0];
 		// FIXME: support variable data_len and more than one next_addr
 		req->bio->xrp_file_offset = file_offset;
 		if (req->bio->xrp_inode->i_op == &ext4_file_inode_operations) {
 			extent_lookup_start = ktime_get();
+			printk("nvme_handle_cqe: retrieve address mapping with logical address %llu\n", file_offset);
 			xrp_retrieve_mapping(req->bio->xrp_inode, file_offset, data_len, &mapping);
 			atomic_long_add(ktime_sub(ktime_get(), extent_lookup_start), &xrp_extent_lookup_time);
 			atomic_long_inc(&xrp_extent_lookup_count);
 			if (!mapping.exist || mapping.len < data_len || mapping.address & 0x1ff) {
-				printk("nvme_handle_cqe: failed to retrieve address mapping with logical address 0x%llx, dump context\n", file_offset);
+				printk("nvme_handle_cqe: failed to retrieve address mapping with logical address %llu, dump context\n", file_offset);
 				ebpf_dump_page((uint8_t *) ebpf_context.scratch, 4096);
 				if (!nvme_try_complete_req(req, cqe->status, cqe->result))
 					nvme_pci_complete_rq(req);
@@ -1174,10 +1225,61 @@ static inline void nvme_handle_cqe(struct nvme_queue *nvmeq, u16 idx)
 		req->bio->xrp_count += 1;
 		req->bio->bi_iter.bi_sector = (disk_offset >> 9) + req->bio->xrp_partition_start_sector;
 		req->__sector = req->bio->bi_iter.bi_sector;
+		//zhengxd: slba (512B)
 		req->xrp_command->rw.slba = cpu_to_le64(nvme_sect_to_lba(req->q->queuedata, blk_rq_pos(req)));
+		printk("nvme_handle_cqe: retrieve address mapping with disk address %llu\n", req->xrp_command->rw.slba);
 		//zhengxd: init sgl.addr 和 rw.length
-		req->xrp_command->rw.dptr.sgl.addr += req->xrp_command->rw.length;
-		req->xrp_command->rw.length = data_len;
+		//zhengxd: length(7 sector), addr(bytes)
+		struct nvme_sgl_desc *sg_desc = &(req->xrp_command->rw.dptr.sgl);
+		if(sg_desc->type == NVME_SGL_FMT_DATA_DESC){
+			sg_desc->addr += cpu_to_le64((req->xrp_command->rw.length + 1) << 9);
+			sg_desc->length -= cpu_to_le32((req->xrp_command->rw.length + 1) << 9);
+			printk("nvme_handle_cqe: single segment: addr is %llu, length is %d\n", sg_desc->addr,sg_desc->length);
+		}else{
+			//zhengxd: mutli segment(sgls) < 256 segmens (one page)
+			struct nvme_iod *iod = blk_mq_rq_to_pdu(req);
+			struct nvme_sgl_desc *sg_list = (struct nvme_sgl_desc *)nvme_pci_iod_list(req)[0];
+			struct scatterlist *sg = iod->sg;
+			// uint32_t length = cpu_to_le32((uint32_t)(ebpf_context.size[1]));
+			uint32_t length = (req->xrp_command->rw.length + 1) << 9;
+			// uint32_t index =  blk_rq_nr_phys_segments(req) - (sg_desc->length / sizeof(struct nvme_sgl_desc));
+			uint32_t index = 0;
+			do{
+				printk("nvme_handle_cqe: data len is %d\n", length);
+				printk("nvme_handle_cqe: index is %d,multi segment: sglist_length is %u, length is %u\n", 
+										index,sg_list[index].length,length);
+				printk("nvme_handle_cqe: index is %d,iod->sg.length is %u,iod->sg.dma_length is %u\n", 
+										index,iod->sg[index].length,iod->sg[index].dma_length);
+				if(length == sg_list[index].length){
+					length -= sg_list[index].length;
+					index++;
+				}else{
+					printk("nvme_handle_cqe: length dismatch error\n");
+					ebpf_dump_page((uint8_t *) sg_list, 4096);
+					if (!nvme_try_complete_req(req, cqe->status, cqe->result))
+						nvme_pci_complete_rq(req);
+
+					return;
+					// sg_list[index].addr += cpu_to_le64(length);
+					// sg_list[index].length -= length;
+					// length = 0;
+				}
+			}while(length && (index < (sg_desc->length / sizeof(struct nvme_sgl_desc))) ); 
+			// sg_list move(sg_list need free page, sg need unmap)
+			uint32_t index_tmp = 0;
+			do{
+				sg_list[index_tmp].addr = sg_list[index_tmp + 1].addr;
+				sg_list[index_tmp].length = sg_list[index_tmp + 1].length;
+				sg_list[index_tmp].type = sg_list[index_tmp + 1].type;
+				index_tmp++;
+			}while( index_tmp < (sg_desc->length / sizeof(struct nvme_sgl_desc) - 1));
+			// sg_desc->addr += cpu_to_le32(index * sizeof(struct nvme_sgl_desc));
+    		sg_desc->length -= cpu_to_le32(index * sizeof(struct nvme_sgl_desc));
+			printk("nvme_handle_cqe: multi segment: addr is %llu, length is %d\n", sg_desc->addr,sg_desc->length);
+		}
+		//zhengxd: struct nvme_ns *ns = hctx->queue->queuedata;
+		//zhengxd: struct nvme_ns *ns = req->mq_hctx->queue->queuedata;ns->lba_shift
+		req->xrp_command->rw.length = cpu_to_le16((data_len >> 9) - 1);
 		atomic_long_add(ktime_sub(ktime_get(), resubmit_start), &xrp_resubmit_int_time);
 		atomic_long_inc(&xrp_resubmit_int_count);
 		nvme_submit_cmd(nvmeq, req->xrp_command, true);

@@ -1077,9 +1077,6 @@ blk_qc_t submit_bio(struct bio *bio)
 	if (blkcg_punt_bio_submit(bio))
 		return BLK_QC_T_NONE;
 	
-	if(bio->xrp_enabled){
-		printk("----block 0: submit_bio: bio_bv_len 1 is: %d----\n",bio->bi_io_vec->bv_len);
-	}
 	/*
 	 * If it's a regular read/write or a barrier with data attached,
 	 * go through the normal accounting stuff before submission.

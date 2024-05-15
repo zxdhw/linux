@@ -5,6 +5,7 @@
  */
 
 #include "linux/nvme.h"
+#include "linux/scatterlist.h"
 #include <linux/acpi.h>
 #include <linux/aer.h>
 #include <linux/async.h>
@@ -540,7 +541,7 @@ static inline bool nvme_pci_use_sgls(struct nvme_dev *dev, struct request *req)
 
 	if (!(dev->ctrl.sgls & ((1 << 0) | (1 << 1)))){
 		if(req->bio->xrp_enabled){
-			printk("---use_sgls: sgls is false ----\n");
+			printk("---use_sgls: sgls is false, avg size is %d ----\n",avg_seg_size);
 		}
 		return false;
 	}
@@ -740,6 +741,83 @@ bad_sgl:
 	return BLK_STS_IOERR;
 }
 
+static blk_status_t nvme_pci_setup_prps_xrp(struct nvme_dev *dev,
+		struct request *req, struct nvme_rw_command *cmnd)
+{
+	struct nvme_iod *iod = blk_mq_rq_to_pdu(req);
+	struct dma_pool *pool;
+	int errors = 0;
+	int slength = blk_rq_payload_bytes(req);
+	if(req->bio->xrp_enabled){
+		printk("----prp map : length is %d, data len is %d----\n",slength, req->__data_len);
+	}
+	struct scatterlist *sg = iod->sg;
+	int dma_len = sg_dma_len(sg);
+	u64 dma_addr = sg_dma_address(sg);
+	int offset = dma_addr & (NVME_CTRL_PAGE_SIZE - 1);
+	if (offset != 0) {
+		errors = 1;
+		goto error;
+	}
+	__le64 *prp_list;
+	void **list = nvme_pci_iod_list(req);
+	dma_addr_t prp_dma;
+
+	pool = dev->prp_page_pool;
+	iod->npages = 1;
+	prp_list = dma_pool_alloc(pool, GFP_ATOMIC, &prp_dma);
+	if (!prp_list) {
+		errors = 2;
+		goto error;
+	}
+	list[0] = prp_list;
+	iod->first_dma = prp_dma;
+
+	// init start prp
+	cmnd->dptr.prp1 = cpu_to_le64(sg_dma_address(iod->sg));
+	cmnd->dptr.prp2 = cpu_to_le64(iod->first_dma);
+
+	sg = sg_next(sg);
+	dma_len = sg_dma_len(sg);
+	dma_addr = sg_dma_address(sg);
+	offset = dma_addr & (NVME_CTRL_PAGE_SIZE - 1);
+
+	int i = 0;
+	for (;;) {
+		if (offset != 0) {
+			errors = 1;
+			goto error;
+		}
+		if (i == NVME_CTRL_PAGE_SIZE >> 3) {
+			nvme_free_prps(dev, req);
+			errors = 3;
+			goto error;
+		}
+		prp_list[i++] = cpu_to_le64(dma_addr);
+		sg = sg_next(sg);
+		if(!sg) {
+			printk("---sg out----\n");
+			break;
+		}
+		dma_addr = sg_dma_address(sg);
+		dma_len = sg_dma_len(sg);
+		offset = dma_addr & (NVME_CTRL_PAGE_SIZE - 1);
+		if(unlikely(dma_len < 0))
+			goto bad_sgl; 
+	}
+	return BLK_STS_OK;
+error:
+	iod->first_dma = dma_addr;
+	iod->npages = -1;
+	printk("----segment error: errors is %d----\n",errors);
+	return BLK_STS_RESOURCE;
+
+bad_sgl:
+	WARN(DO_ONCE(nvme_print_sgl, iod->sg, iod->nents),
+			"Invalid SGL for payload:%d nents:%d\n",
+			blk_rq_payload_bytes(req), iod->nents);
+	return BLK_STS_IOERR;
+}
 static void nvme_pci_sgl_set_data(struct nvme_sgl_desc *sge,
 		struct scatterlist *sg)
 {
@@ -814,12 +892,6 @@ static blk_status_t nvme_pci_setup_sgls(struct nvme_dev *dev,
 		}
 		//zhengxd: in x2rp v1.0, one page is enough(< 256 segments)
 		nvme_pci_sgl_set_data(&sg_list[i++], sg);
-		if(req->bio->xrp_enabled){
-			printk("----nvme_setup_sgl: sglist is: %d----\n",i);
-			printk("----nvme_setup_sgl: sg addr is %llu, sg length is %d----",cpu_to_le64(sg_dma_address(sg)),cpu_to_le32(sg_dma_len(sg)) );
-			printk("----nvme_setup_sgl: sg list addr is %llu, sg list length is %d----",sg_list[i-1].addr,sg_list[i-1].length);
-		}
-
 		sg = sg_next(sg);
 	} while (--entries > 0);
 
@@ -845,6 +917,9 @@ static blk_status_t nvme_setup_prp_simple(struct nvme_dev *dev,
 	cmnd->dptr.prp1 = cpu_to_le64(iod->first_dma);
 	if (bv->bv_len > first_prp_len)
 		cmnd->dptr.prp2 = cpu_to_le64(iod->first_dma + first_prp_len);
+	if(req->bio->xrp_enabled){
+		printk("----prp simple set: prp1 is: %llu, prp2 is %llu----\n",cmnd->dptr.prp1,cmnd->dptr.prp2);
+	}
 	return BLK_STS_OK;
 }
 
@@ -861,14 +936,8 @@ static blk_status_t nvme_setup_sgl_simple(struct nvme_dev *dev,
 
 	cmnd->flags = NVME_CMD_SGL_METABUF;
 	cmnd->dptr.sgl.addr = cpu_to_le64(iod->first_dma);
-	if(req->bio->xrp_enabled){
-		printk("sgl map: before to le64: rw.dptr.sgl.addr is %llu\n", iod->first_dma);
-	}
 	//zhengxd: in x2rp: cmnd->dptr.sgl.length >= cnmd->length
 	cmnd->dptr.sgl.length = cpu_to_le32(iod->dma_len);
-	if(req->bio->xrp_enabled){
-		printk("sgl map simple: iod->dma_len is %d\n", iod->dma_len);
-	}
 	cmnd->dptr.sgl.type = NVME_SGL_FMT_DATA_DESC << 4;
 	return BLK_STS_OK;
 }
@@ -889,16 +958,14 @@ static blk_status_t nvme_map_data(struct nvme_dev *dev, struct request *req,
 		if (!is_pci_p2pdma_page(bv.bv_page)) {
 			//zhengxd: x2rp use sgl map
 			if (req->bio->xrp_enabled) {
-				printk("---nvme_map_data: qid is: %d, ctrl.sgls is %d----\n",iod->nvmeq->qid,dev->ctrl.sgls);
 				printk("---nvme_map_data: bv_len is: %d----\n",bv.bv_len);
-				return nvme_setup_sgl_simple(dev, req,
+				return nvme_setup_prp_simple(dev, req,
 							     &cmnd->rw, &bv);
 			}
 			if (bv.bv_offset + bv.bv_len <= NVME_CTRL_PAGE_SIZE * 2)
 				
 				return nvme_setup_prp_simple(dev, req,
 							     &cmnd->rw, &bv);
-
 			if (iod->nvmeq->qid &&
 			    dev->ctrl.sgls & ((1 << 0) | (1 << 1)))
 				return nvme_setup_sgl_simple(dev, req,
@@ -926,9 +993,7 @@ static blk_status_t nvme_map_data(struct nvme_dev *dev, struct request *req,
 
 	iod->use_sgl = nvme_pci_use_sgls(dev, req);
 	if(req->bio->xrp_enabled){
-		printk("---nvme_map_data: usesgl is: %d----\n",iod->use_sgl);
-		iod->use_sgl = true;
-		ret = nvme_pci_setup_sgls(dev, req, &cmnd->rw, nr_mapped);
+		ret = nvme_pci_setup_prps_xrp(dev, req, &cmnd->rw);
 		printk("---nvme_map_data: nr_mapped is %d,ret is: %d----\n",nr_mapped,ret);
 	} else if (iod->use_sgl) {
 		ret = nvme_pci_setup_sgls(dev, req, &cmnd->rw, nr_mapped);
@@ -1008,7 +1073,6 @@ static blk_status_t nvme_queue_rq(struct blk_mq_hw_ctx *hctx,
 		if (ret)
 			goto out_free_cmd;
 	}
-
 	if (blk_integrity_rq(req)) {
 		ret = nvme_map_metadata(dev, req, cmndp);
 		if (ret)
@@ -1195,7 +1259,7 @@ static inline void nvme_handle_cqe(struct nvme_queue *nvmeq, u16 idx)
 		}
 		/* address mapping */
 		file_offset = ebpf_context.next_addr[0];
-		printk("nvme_handle_cqe: ebpf file addr is  %llu\n", file_offset);
+		// printk("nvme_handle_cqe: ebpf file addr is  %llu\n", file_offset);
 		//zhengxd: in xrp, data len is 512, but in x2rp datalen is variable
 		// data_len = 512;
 		data_len = ebpf_context.size[0];
@@ -1227,56 +1291,34 @@ static inline void nvme_handle_cqe(struct nvme_queue *nvmeq, u16 idx)
 		req->__sector = req->bio->bi_iter.bi_sector;
 		//zhengxd: slba (512B)
 		req->xrp_command->rw.slba = cpu_to_le64(nvme_sect_to_lba(req->q->queuedata, blk_rq_pos(req)));
-		printk("nvme_handle_cqe: retrieve address mapping with disk address %llu\n", req->xrp_command->rw.slba);
+		// printk("nvme_handle_cqe: retrieve address mapping with disk address %llu\n", req->xrp_command->rw.slba);
 		//zhengxd: init sgl.addr 和 rw.length
 		//zhengxd: length(7 sector), addr(bytes)
-		struct nvme_sgl_desc *sg_desc = &(req->xrp_command->rw.dptr.sgl);
-		if(sg_desc->type == NVME_SGL_FMT_DATA_DESC){
-			sg_desc->addr += cpu_to_le64((req->xrp_command->rw.length + 1) << 9);
-			sg_desc->length -= cpu_to_le32((req->xrp_command->rw.length + 1) << 9);
-			printk("nvme_handle_cqe: single segment: addr is %llu, length is %d\n", sg_desc->addr,sg_desc->length);
+		//zhengxd: mutli segment(sgls) < 256 segmens (one page)
+		void **list = nvme_pci_iod_list(req);
+		__le64 *prp_list = list[0];
+		uint32_t length = (req->xrp_command->rw.length + 1) << 9;
+		// printk("nvme_handle_cqe: multi segment: prp_address is %llu, length is %u\n", 
+		// 							prp_list[0],length);
+		if(length == 4096){
+				req->xrp_command->rw.dptr.prp1 = prp_list[0];
 		}else{
-			//zhengxd: mutli segment(sgls) < 256 segmens (one page)
-			struct nvme_iod *iod = blk_mq_rq_to_pdu(req);
-			struct nvme_sgl_desc *sg_list = (struct nvme_sgl_desc *)nvme_pci_iod_list(req)[0];
-			struct scatterlist *sg = iod->sg;
-			// uint32_t length = cpu_to_le32((uint32_t)(ebpf_context.size[1]));
-			uint32_t length = (req->xrp_command->rw.length + 1) << 9;
-			// uint32_t index =  blk_rq_nr_phys_segments(req) - (sg_desc->length / sizeof(struct nvme_sgl_desc));
-			uint32_t index = 0;
-			do{
-				printk("nvme_handle_cqe: data len is %d\n", length);
-				printk("nvme_handle_cqe: index is %d,multi segment: sglist_length is %u, length is %u\n", 
-										index,sg_list[index].length,length);
-				printk("nvme_handle_cqe: index is %d,iod->sg.length is %u,iod->sg.dma_length is %u\n", 
-										index,iod->sg[index].length,iod->sg[index].dma_length);
-				if(length == sg_list[index].length){
-					length -= sg_list[index].length;
-					index++;
-				}else{
-					printk("nvme_handle_cqe: length dismatch error\n");
-					ebpf_dump_page((uint8_t *) sg_list, 4096);
-					if (!nvme_try_complete_req(req, cqe->status, cqe->result))
-						nvme_pci_complete_rq(req);
-
-					return;
-					// sg_list[index].addr += cpu_to_le64(length);
-					// sg_list[index].length -= length;
-					// length = 0;
-				}
-			}while(length && (index < (sg_desc->length / sizeof(struct nvme_sgl_desc))) ); 
-			// sg_list move(sg_list need free page, sg need unmap)
-			uint32_t index_tmp = 0;
-			do{
-				sg_list[index_tmp].addr = sg_list[index_tmp + 1].addr;
-				sg_list[index_tmp].length = sg_list[index_tmp + 1].length;
-				sg_list[index_tmp].type = sg_list[index_tmp + 1].type;
-				index_tmp++;
-			}while( index_tmp < (sg_desc->length / sizeof(struct nvme_sgl_desc) - 1));
-			// sg_desc->addr += cpu_to_le32(index * sizeof(struct nvme_sgl_desc));
-    		sg_desc->length -= cpu_to_le32(index * sizeof(struct nvme_sgl_desc));
-			printk("nvme_handle_cqe: multi segment: addr is %llu, length is %d\n", sg_desc->addr,sg_desc->length);
-		}
+			printk("nvme_handle_cqe: length dismatch error\n");
+			ebpf_dump_page((uint8_t *) prp_list, 4096);
+			if (!nvme_try_complete_req(req, cqe->status, cqe->result))
+					nvme_pci_complete_rq(req);
+			return;
+		} 
+		// prp_list move(prp_list need free page, sg need unmap)
+		uint32_t index = 0;
+		uint32_t continuation = 1;
+		do{
+			prp_list[index] = prp_list[index + 1];
+			index++;
+			if(prp_list[index + 1] == 0){
+				continuation = 0;
+			}
+		}while(continuation);
 		//zhengxd: struct nvme_ns *ns = hctx->queue->queuedata;
 		//zhengxd: struct nvme_ns *ns = req->mq_hctx->queue->queuedata;ns->lba_shift
 		req->xrp_command->rw.length = cpu_to_le16((data_len >> 9) - 1);

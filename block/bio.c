@@ -905,9 +905,9 @@ void __bio_add_page(struct bio *bio, struct page *page,
 	if(!bio->xrp_enabled) bio->bi_iter.bi_size += len;
 	bio->bi_vcnt++;
 
-	if(bio->xrp_enabled){
-		printk("----iomap 2: vcnt is %d, bv_len is %d, bv offset is %d-----\n", bio->bi_vcnt,bv->bv_len,bv->bv_offset);
-	}
+	// if(bio->xrp_enabled){
+	// 	printk("----iomap 2: vcnt is %d, bv_len is %d, bv offset is %d-----\n", bio->bi_vcnt,bv->bv_len,bv->bv_offset);
+	// }
 
 	if (!bio_flagged(bio, BIO_WORKINGSET) && unlikely(PageWorkingset(page)))
 		bio_set_flag(bio, BIO_WORKINGSET);

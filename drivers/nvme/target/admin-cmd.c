@@ -431,7 +431,7 @@ static void nvmet_execute_identify_ctrl(struct nvmet_req *req)
 	id->awupf = 0;
 	//zhengxd: sgl support
 	id->sgls = cpu_to_le32(1 << 0);	/* we always support SGLs */
-	printk("----nvme 0: sgls is %d\n-----", id->sgls);
+	// printk("----nvme 0: sgls is %d\n-----", id->sgls);
 	if (ctrl->ops->flags & NVMF_KEYED_SGLS)
 		id->sgls |= cpu_to_le32(1 << 2);
 	if (req->port->inline_data_size)

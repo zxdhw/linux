@@ -389,7 +389,7 @@ iomap_dio_bio_actor(struct inode *inode, loff_t pos, loff_t length,
 		iomap_dio_submit_bio(dio, iomap, bio, pos);
 		pos += n;
 		if(bio->xrp_enabled){
-			printk("----nr_pages is %d----\n",nr_pages);
+			printk("----iomap: nr_pages is %d----\n",nr_pages);
 		}
 	} while (nr_pages);
 

@@ -256,9 +256,8 @@ static struct bio *blk_bio_segment_split(struct request_queue *q,
 	if(bio->xrp_enabled){
 		bio_for_each_bvec_xrp(bv, bio, iter) {
 
-			printk("----bio nsegs is %d, max_sectors is %d-----\n", nsegs, max_sectors);
-			printk("----bio max segs is %d-----\n", max_segs);
-			printk("----bio bv.bv_offset is %d, bv.bv_len is %d-----\n", bv.bv_offset,bv.bv_len);
+			// printk("----bio nsegs is %d, max_sectors is %d-----\n", nsegs, max_sectors);
+			// printk("----bio bv.bv_offset is %d, bv.bv_len is %d-----\n", bv.bv_offset,bv.bv_len);
 			
 			//zhengxd: max_sectors: 2560
 			if ( (nsegs < max_segs) && (sectors + (bv.bv_len >> 9) <= max_sectors)) {
@@ -520,12 +519,11 @@ static int __blk_bios_map_sg(struct request_queue *q, struct bio *bio,
 	
 				if (bvec.bv_offset + bvec.bv_len <= PAGE_SIZE){
 					nsegs += __blk_bvec_map_sg(bvec, sglist, sg);
-					printk("----sgl map single:  sglist length is%d, offset is %d----\n",(*sg)->length,(*sg)->offset);
+					// printk("----sgl map single:  sglist length is %d, offset is %d----\n",(*sg)->length,(*sg)->offset);
 				} else{
 					nsegs += blk_bvec_map_sg(q, &bvec, sglist, sg);
-					printk("----sgl map multi:  sglist length is%d, offset is %d----\n",(*sg)->length,(*sg)->offset);
+					// printk("----sgl map multi:  sglist length is%d, offset is %d----\n",(*sg)->length,(*sg)->offset);
 				}
-				printk("----sgl map: nsegs is %d, bvlen is %d----\n",nsegs,bvec.bv_len);
 			}
 		}
 	} else {
@@ -544,9 +542,6 @@ static int __blk_bios_map_sg(struct request_queue *q, struct bio *bio,
 					nsegs += __blk_bvec_map_sg(bvec, sglist, sg);
 				else
 					nsegs += blk_bvec_map_sg(q, &bvec, sglist, sg);
-				if(bio->xrp_enabled){
-					printk("----sgl map: nsegs is %d, bvlen is %d----\n",nsegs,bvec.bv_len);
-				}
 	next_bvec:
 				new_bio = false;
 			}

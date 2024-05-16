@@ -9,6 +9,7 @@
  *
  *	See ../COPYING for licensing terms.
  */
+#include "linux/kern_levels.h"
 #define pr_fmt(fmt) "%s: " fmt, __func__
 
 #include <linux/kernel.h>
@@ -2149,7 +2150,7 @@ SYSCALL_DEFINE5(io_submit_xrp, aio_context_t, ctx_id, long, nr, struct iocb __us
 			ret = -EFAULT;
 			break;
 		}
-		printk("io submit: ptr is %p\n", scratch_buf);
+		// printk(KERN_DEBUG "io submit: ptr is %p\n", scratch_buf);
 		// printk("io submit: value is %p\n", &scratch_buf);
 		struct iocb __user *user_iocb;
 		if (unlikely(get_user(user_iocb, iocbpp + i))) {

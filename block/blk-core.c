@@ -1448,23 +1448,15 @@ bool blk_update_request(struct request *req, blk_status_t error,
 
 	if (unlikely(error && !blk_rq_is_passthrough(req) &&
 		     !(req->rq_flags & RQF_QUIET))){
-		if(req->bio->xrp_enabled){
-			printk("----blk_update_request: error 1----\n");
-		}
 		print_req_error(req, error, __func__);
 	}
-	if(req->bio->xrp_enabled){
-		printk("----blk_update_request: nr_bytes is %d----\n", nr_bytes);
-	}
+
 	blk_account_io_completion(req, nr_bytes);
 
 	total_bytes = 0;
 	while (req->bio) {
 		struct bio *bio = req->bio;
 		unsigned bio_bytes = min(bio->bi_iter.bi_size, nr_bytes);
-		if(req->bio->xrp_enabled){
-			printk("----blk_update_request: nr_bytes is %d,bio_bytes is %d, bi size is %d----\n", nr_bytes,bio_bytes,bio->bi_iter.bi_size);
-		}
 		if (bio_bytes == bio->bi_iter.bi_size)
 			req->bio = bio->bi_next;
 

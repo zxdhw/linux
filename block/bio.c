@@ -1017,7 +1017,7 @@ static int __bio_iov_iter_get_pages(struct bio *bio, struct iov_iter *iter)
 
 	size = iov_iter_get_pages(iter, pages, LONG_MAX, nr_pages, &offset);
 	if(bio->xrp_enabled){
-		printk("----iomap 0: all bv size is %ld-----\n", size);
+		printk("----iomap pages: all bv size is %ld-----\n", size);
 	}
 	if (unlikely(size <= 0))
 		return size ? size : -EFAULT;
@@ -1035,7 +1035,7 @@ static int __bio_iov_iter_get_pages(struct bio *bio, struct iov_iter *iter)
 			
 		} else if (__bio_try_merge_page(bio, page, len, offset, &same_page)) {
 			if(bio->xrp_enabled){
-				printk("----iomap 1: try merge-----\n");
+				printk("----iomap merge: try merge-----\n");
 			}
 			if (same_page)
 				put_page(page);

@@ -2174,7 +2174,7 @@ blk_qc_t blk_mq_submit_bio(struct bio *bio)
 	blk_queue_bounce(q, &bio);
 	//zhengxd: if(bio > 128KB || segments >= 33) 
 	__blk_queue_split(&bio, &nr_segs);
-
+	//zhegnxd: data check protection(dont use)
 	if (!bio_integrity_prep(bio))
 		goto queue_exit;
 	//zhengxd: disbaled nomerge

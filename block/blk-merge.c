@@ -256,9 +256,6 @@ static struct bio *blk_bio_segment_split(struct request_queue *q,
 	if(bio->xrp_enabled){
 		bio_for_each_bvec_xrp(bv, bio, iter) {
 
-			// printk("----bio nsegs is %d, max_sectors is %d-----\n", nsegs, max_sectors);
-			// printk("----bio bv.bv_offset is %d, bv.bv_len is %d-----\n", bv.bv_offset,bv.bv_len);
-			
 			//zhengxd: max_sectors: 2560
 			if ( (nsegs < max_segs) && (sectors + (bv.bv_len >> 9) <= max_sectors)) {
 				nsegs++;
@@ -293,9 +290,6 @@ static struct bio *blk_bio_segment_split(struct request_queue *q,
 	}
 	
 	*segs = nsegs;
-	if(bio->xrp_enabled){
-		printk("----bio nsegs is %d-----\n", nsegs);
-	}
 	return NULL;
 split:
 	*segs = nsegs;

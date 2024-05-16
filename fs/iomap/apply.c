@@ -66,6 +66,7 @@ iomap_apply(struct inode *inode, loff_t pos, loff_t length, unsigned flags,
 	end = iomap.offset + iomap.length;
 	if (srcmap.type != IOMAP_HOLE)
 		end = min(end, srcmap.offset + srcmap.length);
+	//zhengxd: length check and cut
 	if (pos + length > end)
 		length = end - pos;
 

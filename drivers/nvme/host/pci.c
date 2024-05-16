@@ -540,22 +540,13 @@ static inline bool nvme_pci_use_sgls(struct nvme_dev *dev, struct request *req)
 	avg_seg_size = DIV_ROUND_UP(blk_rq_payload_bytes(req), nseg);
 
 	if (!(dev->ctrl.sgls & ((1 << 0) | (1 << 1)))){
-		if(req->bio->xrp_enabled){
-			printk("---use_sgls: sgls is false, avg size is %d ----\n",avg_seg_size);
-		}
 		return false;
 	}
 	if (!iod->nvmeq->qid){
-		if(req->bio->xrp_enabled){
-			printk("---use_sgls: queueid is 0 ----\n");
-		}
 		return false;
 	}
 	//zhengxd: sgl_threshold: 32K
 	if (!sgl_threshold || avg_seg_size < sgl_threshold){
-		if(req->bio->xrp_enabled){
-			printk("---use_sgls: sgl threshold is %d, avg_seg_size is %d----\n",sgl_threshold,avg_seg_size);
-		}
 		return false;
 	}
 	return true;
@@ -748,9 +739,6 @@ static blk_status_t nvme_pci_setup_prps_xrp(struct nvme_dev *dev,
 	struct dma_pool *pool;
 	int errors = 0;
 	int slength = blk_rq_payload_bytes(req);
-	if(req->bio->xrp_enabled){
-		printk("----prp map : length is %d, data len is %d----\n",slength, req->__data_len);
-	}
 	struct scatterlist *sg = iod->sg;
 	int dma_len = sg_dma_len(sg);
 	u64 dma_addr = sg_dma_address(sg);
@@ -796,7 +784,6 @@ static blk_status_t nvme_pci_setup_prps_xrp(struct nvme_dev *dev,
 		prp_list[i++] = cpu_to_le64(dma_addr);
 		sg = sg_next(sg);
 		if(!sg) {
-			printk("---sg out----\n");
 			break;
 		}
 		dma_addr = sg_dma_address(sg);
@@ -1267,12 +1254,12 @@ static inline void nvme_handle_cqe(struct nvme_queue *nvmeq, u16 idx)
 		req->bio->xrp_file_offset = file_offset;
 		if (req->bio->xrp_inode->i_op == &ext4_file_inode_operations) {
 			extent_lookup_start = ktime_get();
-			printk("nvme_handle_cqe: retrieve address mapping with logical address %llu\n", file_offset);
+			printk("----nvme_handle_cqe: retrieve address mapping with logical address %llu\n", file_offset);
 			xrp_retrieve_mapping(req->bio->xrp_inode, file_offset, data_len, &mapping);
 			atomic_long_add(ktime_sub(ktime_get(), extent_lookup_start), &xrp_extent_lookup_time);
 			atomic_long_inc(&xrp_extent_lookup_count);
 			if (!mapping.exist || mapping.len < data_len || mapping.address & 0x1ff) {
-				printk("nvme_handle_cqe: failed to retrieve address mapping with logical address %llu, dump context\n", file_offset);
+				printk("----nvme_handle_cqe: failed to retrieve address mapping with logical address %llu, dump context\n", file_offset);
 				ebpf_dump_page((uint8_t *) ebpf_context.scratch, 4096);
 				if (!nvme_try_complete_req(req, cqe->status, cqe->result))
 					nvme_pci_complete_rq(req);
@@ -1303,7 +1290,7 @@ static inline void nvme_handle_cqe(struct nvme_queue *nvmeq, u16 idx)
 		if(length == 4096){
 				req->xrp_command->rw.dptr.prp1 = prp_list[0];
 		}else{
-			printk("nvme_handle_cqe: length dismatch error\n");
+			printk("----nvme_handle_cqe: length dismatch error\n");
 			ebpf_dump_page((uint8_t *) prp_list, 4096);
 			if (!nvme_try_complete_req(req, cqe->status, cqe->result))
 					nvme_pci_complete_rq(req);

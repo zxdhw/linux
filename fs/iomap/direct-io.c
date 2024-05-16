@@ -332,11 +332,11 @@ iomap_dio_bio_actor(struct inode *inode, loff_t pos, loff_t length,
 		bio->xrp_partition_start_sector = 0;
 		bio->xrp_count = 1;
 		bio->xrp_buffer_size = nr_pages;
-		if(bio->xrp_enabled) {
-			printk("----enter iomap 0----\n");
-		}
-		ret = bio_iov_iter_get_pages(bio, dio->submit.iter);
 
+		ret = bio_iov_iter_get_pages(bio, dio->submit.iter);
+		if(bio->xrp_enabled) {
+			printk("----enter iomap: ret is %d----\n",ret);
+		}
 		if (unlikely(ret)) {
 			/*
 			 * We have to stop part way through an IO. We must fall
@@ -378,6 +378,7 @@ iomap_dio_bio_actor(struct inode *inode, loff_t pos, loff_t length,
 			task_io_account_write(n);
 		} else {
 			if (dio->flags & IOMAP_DIO_DIRTY)
+			//zhengxd: dirty lock(release in iomap_dio_bio_end_io)
 				bio_set_pages_dirty(bio);
 		}
 		//zhengxd： dio->size initial value is 0
@@ -508,6 +509,9 @@ __iomap_dio_rw(struct kiocb *iocb, struct iov_iter *iter,
 	struct inode *inode = file_inode(iocb->ki_filp);
 	//zhengxd: get buffer size
 	size_t count = iov_iter_count(iter);
+	if(iocb->xrp_enabled){
+		printk("----iomap dio enter: count is %ld----\n",count);
+	}
 	//zhengxd: get data size
 	size_t data_len = iocb->x2rp_data_len;
 	loff_t pos = iocb->ki_pos;
@@ -554,7 +558,7 @@ __iomap_dio_rw(struct kiocb *iocb, struct iov_iter *iter,
 	if (iov_iter_rw(iter) == READ) {
 		if (pos >= dio->i_size)
 			goto out_free_dio;
-
+		// zhengxd: set dirty flag
 		if (iter_is_iovec(iter))
 			dio->flags |= IOMAP_DIO_DIRTY;
 	} else {
@@ -649,9 +653,12 @@ __iomap_dio_rw(struct kiocb *iocb, struct iov_iter *iter,
 			break;
 		}
 	/*zhengxd: the LBA of req must be continuous. 
-	 *in V1.0 we just ignore this problem , and assumed all req address is continuous
+	 *in V1.0 we just ignore this problem , and set host io is 4K
 	 *so, the do-while loop just execute once
 	 */
+		if(iocb->xrp_enabled){
+			iov_iter_reexpand(iter, 0);
+		}
 	} while ((count = iov_iter_count(iter)) > 0);
 	blk_finish_plug(&plug);
 

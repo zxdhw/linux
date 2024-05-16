@@ -516,7 +516,6 @@ static int __blk_bios_map_sg(struct request_queue *q, struct bio *bio,
 					// printk("----sgl map single:  sglist length is %d, offset is %d----\n",(*sg)->length,(*sg)->offset);
 				} else{
 					nsegs += blk_bvec_map_sg(q, &bvec, sglist, sg);
-					// printk("----sgl map multi:  sglist length is%d, offset is %d----\n",(*sg)->length,(*sg)->offset);
 				}
 			}
 		}

@@ -607,9 +607,6 @@ static inline void blk_rq_bio_prep(struct request *rq, struct bio *bio,
 {
 	//zhengxd: segment: use for sgl map
 	rq->nr_phys_segments = nr_segs;
-	if(bio->xrp_enabled){
-		printk("----segments: nr_segments is %d-----\n", nr_segs);
-	}
 	//zhengxd: data len
 	rq->__data_len = bio->bi_iter.bi_size;
 	rq->bio = rq->biotail = bio;

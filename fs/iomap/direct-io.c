@@ -3,6 +3,7 @@
  * Copyright (C) 2010 Red Hat, Inc.
  * Copyright (c) 2016-2018 Christoph Hellwig.
  */
+#include "linux/kern_levels.h"
 #include "linux/mm.h"
 #include "linux/printk.h"
 #include <linux/module.h>
@@ -334,9 +335,7 @@ iomap_dio_bio_actor(struct inode *inode, loff_t pos, loff_t length,
 		bio->xrp_buffer_size = nr_pages;
 
 		ret = bio_iov_iter_get_pages(bio, dio->submit.iter);
-		if(bio->xrp_enabled) {
-			printk("----enter iomap: ret is %d----\n",ret);
-		}
+
 		if (unlikely(ret)) {
 			/*
 			 * We have to stop part way through an IO. We must fall
@@ -389,9 +388,9 @@ iomap_dio_bio_actor(struct inode *inode, loff_t pos, loff_t length,
 						 BIO_MAX_VECS);
 		iomap_dio_submit_bio(dio, iomap, bio, pos);
 		pos += n;
-		if(bio->xrp_enabled){
-			printk("----iomap: nr_pages is %d----\n",nr_pages);
-		}
+		// if(bio->xrp_enabled){
+		// 	printk(KERN_DEBUG "----iomap: nr_pages is %d----\n",nr_pages);
+		// }
 	} while (nr_pages);
 
 	/*
@@ -509,9 +508,6 @@ __iomap_dio_rw(struct kiocb *iocb, struct iov_iter *iter,
 	struct inode *inode = file_inode(iocb->ki_filp);
 	//zhengxd: get buffer size
 	size_t count = iov_iter_count(iter);
-	if(iocb->xrp_enabled){
-		printk("----iomap dio enter: count is %ld----\n",count);
-	}
 	//zhengxd: get data size
 	size_t data_len = iocb->x2rp_data_len;
 	loff_t pos = iocb->ki_pos;
@@ -558,8 +554,8 @@ __iomap_dio_rw(struct kiocb *iocb, struct iov_iter *iter,
 	if (iov_iter_rw(iter) == READ) {
 		if (pos >= dio->i_size)
 			goto out_free_dio;
-		// zhengxd: set dirty flag
-		if (iter_is_iovec(iter))
+		// zhengxd: set dirty flag, x2rp dont set
+		if (iter_is_iovec(iter) && !iocb->xrp_enabled)
 			dio->flags |= IOMAP_DIO_DIRTY;
 	} else {
 		iomap_flags |= IOMAP_WRITE;

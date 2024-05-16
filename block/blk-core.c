@@ -811,10 +811,8 @@ static noinline_for_stack bool submit_bio_checks(struct bio *bio)
 	 * For a REQ_NOWAIT based request, return -EOPNOTSUPP
 	 * if queue does not support NOWAIT.
 	 */
-	if ((bio->bi_opf & REQ_NOWAIT) && !blk_queue_nowait(q)) {
-		printk("-----not_supported 1-----\n");
+	if ((bio->bi_opf & REQ_NOWAIT) && !blk_queue_nowait(q)) 
 		goto not_supported;
-	}
 
 	if (should_fail_bio(bio))
 		goto end_io;
@@ -845,22 +843,16 @@ static noinline_for_stack bool submit_bio_checks(struct bio *bio)
 
 	switch (bio_op(bio)) {
 	case REQ_OP_DISCARD:
-		if (!blk_queue_discard(q)) {
-			printk("-----not_supported 2-----\n");
+		if (!blk_queue_discard(q))
 			goto not_supported;
-		}
 		break;
 	case REQ_OP_SECURE_ERASE:
-		if (!blk_queue_secure_erase(q)){
-			printk("-----not_supported 3-----\n");
+		if (!blk_queue_secure_erase(q))
 			goto not_supported;
-		}
 		break;
 	case REQ_OP_WRITE_SAME:
-		if (!q->limits.max_write_same_sectors){
-			printk("-----not_supported 4-----\n");
+		if (!q->limits.max_write_same_sectors)
 			goto not_supported;
-		}
 		break;
 	case REQ_OP_ZONE_APPEND:
 		status = blk_check_zone_append(q, bio);

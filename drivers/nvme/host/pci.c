@@ -4,6 +4,7 @@
  * Copyright (c) 2011-2014, Intel Corporation.
  */
 
+#include "linux/kern_levels.h"
 #include "linux/nvme.h"
 #include "linux/scatterlist.h"
 #include <linux/acpi.h>
@@ -608,9 +609,9 @@ static void nvme_unmap_data(struct nvme_dev *dev, struct request *req)
 	}
 
 	WARN_ON_ONCE(!iod->nents);
-	if(req->bio->xrp_enabled){
-		printk("----nvme_unmap: iod->page is %d, iod->use_sgl is %d----\n", iod->npages, iod->use_sgl);
-	}
+	// if(req->bio->xrp_enabled){
+	// 	printk("----nvme_unmap: iod->page is %d, iod->use_sgl is %d----\n", iod->npages, iod->use_sgl);
+	// }
 	nvme_unmap_sg(dev, req);
 	if (iod->npages == 0)
 		dma_pool_free(dev->prp_small_pool, nvme_pci_iod_list(req)[0],
@@ -642,10 +643,6 @@ static blk_status_t nvme_pci_setup_prps(struct nvme_dev *dev,
 	struct nvme_iod *iod = blk_mq_rq_to_pdu(req);
 	struct dma_pool *pool;
 	int length = blk_rq_payload_bytes(req);
-	if(req->bio->xrp_enabled){
-		length = req->bio->xrp_buffer_size * NVME_CTRL_PAGE_SIZE;
-		printk("----prp map : length is %d----\n",length);
-	}
 	struct scatterlist *sg = iod->sg;
 	int dma_len = sg_dma_len(sg);
 	u64 dma_addr = sg_dma_address(sg);
@@ -904,9 +901,6 @@ static blk_status_t nvme_setup_prp_simple(struct nvme_dev *dev,
 	cmnd->dptr.prp1 = cpu_to_le64(iod->first_dma);
 	if (bv->bv_len > first_prp_len)
 		cmnd->dptr.prp2 = cpu_to_le64(iod->first_dma + first_prp_len);
-	if(req->bio->xrp_enabled){
-		printk("----prp simple set: prp1 is: %llu, prp2 is %llu----\n",cmnd->dptr.prp1,cmnd->dptr.prp2);
-	}
 	return BLK_STS_OK;
 }
 
@@ -936,16 +930,13 @@ static blk_status_t nvme_map_data(struct nvme_dev *dev, struct request *req,
 	blk_status_t ret = BLK_STS_RESOURCE;
 	int nr_mapped;
 	//zhengxd: check segments number
-	if(req->bio->xrp_enabled){
-		printk("----nvme_map_data: segments is: %d----\n",blk_rq_nr_phys_segments(req));
-	}
 	if (blk_rq_nr_phys_segments(req) == 1) {
 		//zhengxd: align bio_vec && bvec_iter
 		struct bio_vec bv = req_bvec(req);
 		if (!is_pci_p2pdma_page(bv.bv_page)) {
-			//zhengxd: x2rp use sgl map
+			//zhengxd: x2rp use prp map
 			if (req->bio->xrp_enabled) {
-				printk("---nvme_map_data: bv_len is: %d----\n",bv.bv_len);
+				// printk("----nvme_map_data: bv_len is: %d----\n",bv.bv_len);
 				return nvme_setup_prp_simple(dev, req,
 							     &cmnd->rw, &bv);
 			}
@@ -981,7 +972,6 @@ static blk_status_t nvme_map_data(struct nvme_dev *dev, struct request *req,
 	iod->use_sgl = nvme_pci_use_sgls(dev, req);
 	if(req->bio->xrp_enabled){
 		ret = nvme_pci_setup_prps_xrp(dev, req, &cmnd->rw);
-		printk("---nvme_map_data: nr_mapped is %d,ret is: %d----\n",nr_mapped,ret);
 	} else if (iod->use_sgl) {
 		ret = nvme_pci_setup_sgls(dev, req, &cmnd->rw, nr_mapped);
 	} else {
@@ -1175,10 +1165,10 @@ static inline void nvme_handle_cqe(struct nvme_queue *nvmeq, u16 idx)
 		loff_t file_offset, data_len;
 		u64 disk_offset;
 		ktime_t ebpf_start;
-		ktime_t resubmit_start = ktime_get();
+		// ktime_t resubmit_start = ktime_get();
 
 		struct xrp_mapping mapping;
-		ktime_t extent_lookup_start;
+		// ktime_t extent_lookup_start;
 
 		memset(&ebpf_context, 0, sizeof(struct bpf_xrp_kern));
 		//zhengxd: x2rp doesn't need access data, x2rp only submit req,
@@ -1194,10 +1184,10 @@ static inline void nvme_handle_cqe(struct nvme_queue *nvmeq, u16 idx)
 			// zhengxd: need to support variable data_len
 			data_len = (req->xrp_command->rw.length + 1) << 9;
 
-			extent_lookup_start = ktime_get();
+			// extent_lookup_start = ktime_get();
 			xrp_retrieve_mapping(req->bio->xrp_inode, file_offset, data_len, &mapping);
-			atomic_long_add(ktime_sub(ktime_get(), extent_lookup_start), &xrp_extent_lookup_time);
-			atomic_long_inc(&xrp_extent_lookup_count);
+			// atomic_long_add(ktime_sub(ktime_get(), extent_lookup_start), &xrp_extent_lookup_time);
+			// atomic_long_inc(&xrp_extent_lookup_count);
 			if (!mapping.exist || mapping.len < data_len || mapping.address & 0x1ff) {
 				printk("nvme_handle_cqe: failed to retrieve address mapping during verification with logical address 0x%llx, dump context\n", file_offset);
 				ebpf_dump_page((uint8_t *) ebpf_context.scratch, 4096);
@@ -1214,7 +1204,7 @@ static inline void nvme_handle_cqe(struct nvme_queue *nvmeq, u16 idx)
 			}
 		}
 
-		ebpf_start = ktime_get();
+		// ebpf_start = ktime_get();
 		ebpf_prog = req->bio->xrp_bpf_prog;
 		ebpf_return = BPF_PROG_RUN(ebpf_prog, &ebpf_context);
 		if (ebpf_return == EINVAL) {
@@ -1222,8 +1212,8 @@ static inline void nvme_handle_cqe(struct nvme_queue *nvmeq, u16 idx)
 		} else if (ebpf_return != 0) {
 			printk("nvme_handle_cqe: ebpf search unknown error %d\n", ebpf_return);
 		}
-		atomic_long_add(ktime_sub(ktime_get(), ebpf_start), &xrp_ebpf_time);
-		atomic_long_inc(&xrp_ebpf_count);
+		// atomic_long_add(ktime_sub(ktime_get(), ebpf_start), &xrp_ebpf_time);
+		// atomic_long_inc(&xrp_ebpf_count);
 
 		if (ebpf_return != 0) {
 			/* error happens when calling ebpf function. end the request and return */
@@ -1236,10 +1226,10 @@ static inline void nvme_handle_cqe(struct nvme_queue *nvmeq, u16 idx)
 		//zhengxd: end flag
 		if (ebpf_context.done) {
 			/* finish traversal */
-			atomic_long_add(ktime_sub(ktime_get(), resubmit_start), &xrp_resubmit_leaf_time);
-			atomic_long_inc(&xrp_resubmit_leaf_count);
-			atomic_long_add(req->bio->xrp_count, &xrp_resubmit_level_nr);
-			atomic_long_inc(&xrp_resubmit_level_count);
+			// atomic_long_add(ktime_sub(ktime_get(), resubmit_start), &xrp_resubmit_leaf_time);
+			// atomic_long_inc(&xrp_resubmit_leaf_count);
+			// atomic_long_add(req->bio->xrp_count, &xrp_resubmit_level_nr);
+			// atomic_long_inc(&xrp_resubmit_level_count);
 			if (!nvme_try_complete_req(req, cqe->status, cqe->result))
 				nvme_pci_complete_rq(req);
 			return;
@@ -1253,11 +1243,11 @@ static inline void nvme_handle_cqe(struct nvme_queue *nvmeq, u16 idx)
 		// FIXME: support variable data_len and more than one next_addr
 		req->bio->xrp_file_offset = file_offset;
 		if (req->bio->xrp_inode->i_op == &ext4_file_inode_operations) {
-			extent_lookup_start = ktime_get();
-			printk("----nvme_handle_cqe: retrieve address mapping with logical address %llu\n", file_offset);
+			// extent_lookup_start = ktime_get();
+			// printk("----nvme_handle_cqe: retrieve address mapping with logical address %llu\n", file_offset);
 			xrp_retrieve_mapping(req->bio->xrp_inode, file_offset, data_len, &mapping);
-			atomic_long_add(ktime_sub(ktime_get(), extent_lookup_start), &xrp_extent_lookup_time);
-			atomic_long_inc(&xrp_extent_lookup_count);
+			// atomic_long_add(ktime_sub(ktime_get(), extent_lookup_start), &xrp_extent_lookup_time);
+			// atomic_long_inc(&xrp_extent_lookup_count);
 			if (!mapping.exist || mapping.len < data_len || mapping.address & 0x1ff) {
 				printk("----nvme_handle_cqe: failed to retrieve address mapping with logical address %llu, dump context\n", file_offset);
 				ebpf_dump_page((uint8_t *) ebpf_context.scratch, 4096);
@@ -1309,8 +1299,8 @@ static inline void nvme_handle_cqe(struct nvme_queue *nvmeq, u16 idx)
 		//zhengxd: struct nvme_ns *ns = hctx->queue->queuedata;
 		//zhengxd: struct nvme_ns *ns = req->mq_hctx->queue->queuedata;ns->lba_shift
 		req->xrp_command->rw.length = cpu_to_le16((data_len >> 9) - 1);
-		atomic_long_add(ktime_sub(ktime_get(), resubmit_start), &xrp_resubmit_int_time);
-		atomic_long_inc(&xrp_resubmit_int_count);
+		// atomic_long_add(ktime_sub(ktime_get(), resubmit_start), &xrp_resubmit_int_time);
+		// atomic_long_inc(&xrp_resubmit_int_count);
 		nvme_submit_cmd(nvmeq, req->xrp_command, true);
 	}
 }

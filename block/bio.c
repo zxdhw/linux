@@ -2,6 +2,7 @@
 /*
  * Copyright (C) 2001 Jens Axboe <axboe@kernel.dk>
  */
+#include "linux/kern_levels.h"
 #include <linux/mm.h>
 #include <linux/swap.h>
 #include <linux/bio.h>
@@ -906,7 +907,7 @@ void __bio_add_page(struct bio *bio, struct page *page,
 	bio->bi_vcnt++;
 
 	// if(bio->xrp_enabled){
-	// 	printk("----iomap 2: vcnt is %d, bv_len is %d, bv offset is %d-----\n", bio->bi_vcnt,bv->bv_len,bv->bv_offset);
+	// 	printk("----iomap: vcnt is %d, bv_len is %d, bv offset is %d-----\n", bio->bi_vcnt,bv->bv_len,bv->bv_offset);
 	// }
 
 	if (!bio_flagged(bio, BIO_WORKINGSET) && unlikely(PageWorkingset(page)))
@@ -946,10 +947,23 @@ void bio_release_pages(struct bio *bio, bool mark_dirty)
 	if (bio_flagged(bio, BIO_NO_PAGE_REF))
 		return;
 
-	bio_for_each_segment_all(bvec, bio, iter_all) {
-		if (mark_dirty && !PageCompound(bvec->bv_page))
-			set_page_dirty_lock(bvec->bv_page);
-		put_page(bvec->bv_page);
+	if(bio->xrp_enabled){
+		unsigned int idx; 
+		for (idx = 0; idx < bio->bi_vcnt;idx++){
+			bvec = &bio->bi_io_vec[idx];
+			// printk(KERN_DEBUG "bio release page:  bio_vec is %d\n", idx);
+			if(bvec->bv_page){
+				put_page(bvec->bv_page);
+			} else {
+    			printk(KERN_WARNING "bio release page: Unexpected NULL page in bio_vec\n");
+			}		
+		}
+	} else {
+		bio_for_each_segment_all(bvec, bio, iter_all) {
+			if (mark_dirty && !PageCompound(bvec->bv_page))
+				set_page_dirty_lock(bvec->bv_page);
+			put_page(bvec->bv_page);
+		}
 	}
 }
 EXPORT_SYMBOL_GPL(bio_release_pages);
@@ -1016,9 +1030,9 @@ static int __bio_iov_iter_get_pages(struct bio *bio, struct iov_iter *iter)
 	pages += entries_left * (PAGE_PTRS_PER_BVEC - 1);
 
 	size = iov_iter_get_pages(iter, pages, LONG_MAX, nr_pages, &offset);
-	if(bio->xrp_enabled){
-		printk("----iomap pages: all bv size is %ld-----\n", size);
-	}
+	// if(bio->xrp_enabled){
+	// 	printk("----iomap pages: all bv size is %ld-----\n", size);
+	// }
 	if (unlikely(size <= 0))
 		return size ? size : -EFAULT;
 
@@ -1034,9 +1048,9 @@ static int __bio_iov_iter_get_pages(struct bio *bio, struct iov_iter *iter)
 			__bio_add_page(bio, page, len, offset);
 			
 		} else if (__bio_try_merge_page(bio, page, len, offset, &same_page)) {
-			if(bio->xrp_enabled){
-				printk("----iomap merge: try merge-----\n");
-			}
+			// if(bio->xrp_enabled){
+			// 	printk(KERN_DEBUG "----iomap merge: try merge-----\n");
+			// }
 			if (same_page)
 				put_page(page);
 		} else {

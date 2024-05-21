@@ -5263,4 +5263,16 @@ struct bpf_xrp {
 	char *scratch;
 };
 
+struct magazine_xrp {
+	__s32 done;
+	__s32 iter;
+	__s32 max;
+	__s32 in_use;
+	__u64 page[32];
+	__u64 addr[32];
+	__u64 size[32];
+	char *data;
+	char *scratch;
+};
+
 #endif /* _UAPI__LINUX_BPF_H__ */

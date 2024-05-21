@@ -282,7 +282,9 @@ struct bio {
 	int			xrp_count;
 	int			xrp_buffer_size;
 	struct page		*xrp_scratch_page;
+	u64			*xrp_scratch_offset;
 	struct bpf_prog		*xrp_bpf_prog;
+
 	u64			xrp_extent_version;
 	loff_t			xrp_file_offset;
 

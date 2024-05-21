@@ -5,6 +5,7 @@
 #ifndef __LINUX_FILTER_H__
 #define __LINUX_FILTER_H__
 
+#include "linux/types.h"
 #include <stdarg.h>
 
 #include <linux/atomic.h>
@@ -1476,6 +1477,18 @@ struct bpf_xrp_kern {
 	int32_t done;
 	uint64_t next_addr[16];
 	uint64_t size[16];
+	char *data;
+	char *scratch;
+};
+
+struct magazine_kern {
+	uint32_t done;
+	uint32_t iter;
+	uint32_t max;
+	uint32_t in_use;
+	uint64_t page[32];
+	uint64_t addr[32];
+	uint64_t size[32];
 	char *data;
 	char *scratch;
 };

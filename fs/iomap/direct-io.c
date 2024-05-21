@@ -161,8 +161,8 @@ static void iomap_dio_bio_end_io(struct bio *bio)
 	if (bio->xrp_enabled) {
 		put_page(bio->xrp_scratch_page);
 		bio->xrp_scratch_page = NULL;
-		bpf_prog_put(bio->xrp_bpf_prog);
-		bio->xrp_bpf_prog = NULL;
+		// bpf_prog_put(bio->xrp_bpf_prog);
+		// bio->xrp_bpf_prog = NULL;
 	}
 
 	if (bio->bi_status)
@@ -360,17 +360,21 @@ iomap_dio_bio_actor(struct inode *inode, loff_t pos, loff_t length,
 				printk("iomap_dio_bio_actor: failed to get scratch page\n");
 				bio->xrp_enabled = false;
 			}
+			loff_t offset;
+			offset = (unsigned long)dio->iocb->xrp_scratch_buf & (PAGE_SIZE - 1);
+    		bio->xrp_scratch_offset= kmap(bio->xrp_scratch_page) + offset;
 		}
-		if (bio->xrp_enabled) {
-			bio->xrp_bpf_prog = bpf_prog_get_type(dio->iocb->xrp_bpf_fd, BPF_PROG_TYPE_XRP);
-			if (IS_ERR(bio->xrp_bpf_prog)) {
-				printk("iomap_dio_bio_actor: failed to get bpf prog\n");
-				bio->xrp_bpf_prog = NULL;
-				put_page(bio->xrp_scratch_page);
-				bio->xrp_scratch_page = NULL;
-				bio->xrp_enabled = false;
-			}
-		}
+		
+		// if (bio->xrp_enabled) {
+		// 	bio->xrp_bpf_prog = bpf_prog_get_type(dio->iocb->xrp_bpf_fd, BPF_PROG_TYPE_XRP);
+		// 	if (IS_ERR(bio->xrp_bpf_prog)) {
+		// 		printk("iomap_dio_bio_actor: failed to get bpf prog\n");
+		// 		bio->xrp_bpf_prog = NULL;
+		// 		put_page(bio->xrp_scratch_page);
+		// 		bio->xrp_scratch_page = NULL;
+		// 		bio->xrp_enabled = false;
+		// 	}
+		// }
 		//zhengxd: nr_pages > 256 (error)
 		n = bio->bi_iter.bi_size;
 		if (dio->flags & IOMAP_DIO_WRITE) {

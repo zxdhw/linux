@@ -14,6 +14,7 @@
 #include <linux/uio.h>
 #include <linux/task_io_accounting_ops.h>
 #include "trace.h"
+#include <linux/filter.h>
 
 #include "../internal.h"
 
@@ -326,6 +327,8 @@ iomap_dio_bio_actor(struct inode *inode, loff_t pos, loff_t length,
 		bio->bi_end_io = iomap_dio_bio_end_io;
 		bio->bi_opf = bio_opf;
 
+		
+
 		//zhengxd: xrp init
 		//zhengxd: bio_iov_iter_get_page need xrp_enabled
 		bio->xrp_enabled = dio->iocb->xrp_enabled;
@@ -353,17 +356,33 @@ iomap_dio_bio_actor(struct inode *inode, loff_t pos, loff_t length,
 		// bio->xrp_count = 1;
 		//zhengxd: init bi_size with x2rp_data_len
 		if(bio->xrp_enabled) {
-			bio->bi_iter.bi_size = dio->iocb->x2rp_data_len;
+			bio->bi_iter.bi_size = dio->iocb->data_len;
 		}
 		if (bio->xrp_enabled) {
 			if (get_user_pages_fast(dio->iocb->xrp_scratch_buf, 1, FOLL_WRITE, &bio->xrp_scratch_page) != 1) {
 				printk("iomap_dio_bio_actor: failed to get scratch page\n");
 				bio->xrp_enabled = false;
 			}
-			loff_t offset;
+			loff_t offset, len;
 			offset = (unsigned long)dio->iocb->xrp_scratch_buf & (PAGE_SIZE - 1);
     		bio->xrp_scratch_offset= kmap(bio->xrp_scratch_page) + offset;
+
+			//zhengxd: in batch 1.0 , the file is continuous, Fixme in next version
+			int iter;
+			struct magazine_kern *ebpf_context = (struct magazine_kern *)bio->xrp_scratch_offset;
+			for(iter = 0; iter <= ebpf_context->max; iter++){
+				len = ebpf_context->size[iter];
+				pos = ebpf_context->addr[iter];
+				struct iomap iomap_t = { .type = IOMAP_HOLE };
+				struct iomap srcmap_t = { .type = IOMAP_HOLE };
+				ret = dio->iocb->ops->iomap_begin(inode, pos, len, iomap->flags, &iomap_t, &srcmap_t);
+				if (ret)
+					return ret;
+				// lba in 512B
+				ebpf_context->lba[iter] = iomap_sector(&iomap_t, pos);
+			}
 		}
+
 		
 		// if (bio->xrp_enabled) {
 		// 	bio->xrp_bpf_prog = bpf_prog_get_type(dio->iocb->xrp_bpf_fd, BPF_PROG_TYPE_XRP);
@@ -513,7 +532,7 @@ __iomap_dio_rw(struct kiocb *iocb, struct iov_iter *iter,
 	//zhengxd: get buffer size
 	size_t count = iov_iter_count(iter);
 	//zhengxd: get data size
-	size_t data_len = iocb->x2rp_data_len;
+	size_t data_len = iocb->data_len;
 	loff_t pos = iocb->ki_pos;
 	// loff_t end = iocb->ki_pos + data_len - 1, ret = 0;
 	loff_t end, ret = 0;
@@ -535,7 +554,6 @@ __iomap_dio_rw(struct kiocb *iocb, struct iov_iter *iter,
 		return NULL;
 	//zhengxd: datalen assert
 	if(iocb->xrp_enabled && !data_len)
-	// if(!data_len)
 		return NULL;
 
 	dio = kmalloc(sizeof(*dio), GFP_KERNEL);
@@ -725,6 +743,9 @@ iomap_dio_rw(struct kiocb *iocb, struct iov_iter *iter,
 		unsigned int dio_flags)
 {
 	struct iomap_dio *dio;
+	if(iocb->xrp_enabled){
+		iocb->ops = ops;
+	}
 
 	dio = __iomap_dio_rw(iocb, iter, ops, dops, dio_flags);
 	if (IS_ERR_OR_NULL(dio))

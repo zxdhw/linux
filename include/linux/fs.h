@@ -326,7 +326,8 @@ struct kiocb {
 	unsigned int		xrp_bpf_fd;
 	// zhengxd: add data len; 
 	// represents a segment of file address space with ki_pos (start: ki_pos; end: ki_pos+xrp_data_len)
-	u64				x2rp_data_len;
+	u64				data_len;
+	const struct iomap_ops *ops;
 
 	/* The 'ki_filp' pointer is shared in a union for aio */
 	randomized_struct_fields_start

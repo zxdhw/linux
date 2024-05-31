@@ -1488,6 +1488,7 @@ struct magazine_kern {
 	uint32_t in_use;
 	uint64_t page[32];
 	uint64_t addr[32];
+	uint64_t lba[32];
 	uint64_t size[32];
 	char *data;
 	char *scratch;

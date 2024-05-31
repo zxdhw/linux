@@ -97,7 +97,7 @@ struct iocb {
 	/* extra parameters */
 	// __u64	aio_reserved2;	/* TODO: use this for a (struct sigevent *) */
 	/*zhengxd: use reserved2 for data size */
-	__u64	aio_x2rp_dsize;
+	__u64	aio_dsize;
 	/* flags for the "struct iocb" */
 	__u32	aio_flags;
 

@@ -5270,6 +5270,7 @@ struct magazine_xrp {
 	__s32 in_use;
 	__u64 page[32];
 	__u64 addr[32];
+	__u64 lba[32];
 	__u64 size[32];
 	char *data;
 	char *scratch;

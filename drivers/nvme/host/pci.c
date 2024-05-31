@@ -71,7 +71,8 @@ static const struct kernel_param_ops io_queue_depth_ops = {
 	.get = param_get_uint,
 };
 
-static unsigned int io_queue_depth = 1024;
+//zhengxd: io queue depth is 1024
+static unsigned int io_queue_depth = 4096;
 module_param_cb(io_queue_depth, &io_queue_depth_ops, &io_queue_depth, 0644);
 MODULE_PARM_DESC(io_queue_depth, "set io queue depth, should >= 2");
 
@@ -506,14 +507,16 @@ static inline void nvme_write_sq_db(struct nvme_queue *nvmeq, bool write_sq)
 static void nvme_submit_cmd(struct nvme_queue *nvmeq, struct nvme_command *cmd,
 			    bool write_sq)
 {
-	unsigned long flags;
-	spin_lock_irqsave(&nvmeq->sq_lock, flags);
+	// unsigned long flags;
+	// spin_lock_irqsave(&nvmeq->sq_lock, flags);
+	spin_lock(&nvmeq->sq_lock);
 	memcpy(nvmeq->sq_cmds + (nvmeq->sq_tail << nvmeq->sqes),
 	       cmd, sizeof(*cmd));
 	if (++nvmeq->sq_tail == nvmeq->q_depth)
 		nvmeq->sq_tail = 0;
 	nvme_write_sq_db(nvmeq, write_sq);
-	spin_unlock_irqrestore(&nvmeq->sq_lock, flags);
+	spin_unlock(&nvmeq->sq_lock);
+	// spin_unlock_irqrestore(&nvmeq->sq_lock, flags);
 }
 
 static void nvme_commit_rqs(struct blk_mq_hw_ctx *hctx)
@@ -735,7 +738,7 @@ static blk_status_t nvme_pci_setup_prps_xrp(struct nvme_dev *dev,
 	struct nvme_iod *iod = blk_mq_rq_to_pdu(req);
 	struct dma_pool *pool;
 	int errors = 0;
-	int slength = blk_rq_payload_bytes(req);
+	// int slength = blk_rq_payload_bytes(req);
 	struct scatterlist *sg = iod->sg;
 	int dma_len = sg_dma_len(sg);
 	u64 dma_addr = sg_dma_address(sg);
@@ -1070,6 +1073,18 @@ out_free_cmd:
 	return ret;
 }
 
+
+extern atomic_long_t xrp_ebpf_time;
+extern atomic_long_t xrp_ebpf_count;
+
+struct nvme_work {
+    struct work_struct work;
+    struct nvme_queue *nvmeq;
+    struct request *req;
+	u16 idx;
+    bool write_sq;
+};
+
 static void nvme_pci_complete_rq(struct request *req)
 {
 	struct nvme_iod *iod = blk_mq_rq_to_pdu(req);
@@ -1077,7 +1092,7 @@ static void nvme_pci_complete_rq(struct request *req)
 
 	if (blk_integrity_rq(req))
 		dma_unmap_page(dev->dev, iod->meta_dma,
-			       rq_integrity_vec(req)->bv_len, rq_data_dir(req));
+					rq_integrity_vec(req)->bv_len, rq_data_dir(req));
 	if (blk_rq_nr_phys_segments(req))
 		nvme_unmap_data(dev, req);
 	nvme_complete_rq(req);
@@ -1107,22 +1122,63 @@ static inline struct blk_mq_tags *nvme_queue_tagset(struct nvme_queue *nvmeq)
 	return nvmeq->dev->tagset.tags[nvmeq->qid - 1];
 }
 
-extern const struct inode_operations ext4_file_inode_operations;
+static void nvme_submit_work(struct work_struct *work){
 
-extern atomic_long_t xrp_ebpf_time;
-extern atomic_long_t xrp_ebpf_count;
+	struct nvme_work *nvme_work = container_of(work, struct nvme_work, work);
+	struct nvme_queue *nvmeq = nvme_work->nvmeq;
+	struct request *req =  nvme_work->req;
+	u16 idx = nvme_work->idx;
+	struct nvme_completion *cqe = &nvmeq->cqes[idx];
 
-extern atomic_long_t xrp_resubmit_leaf_time;
-extern atomic_long_t xrp_resubmit_leaf_count;
 
-extern atomic_long_t xrp_resubmit_int_time;
-extern atomic_long_t xrp_resubmit_int_count;
+	struct magazine_kern *ebpf_context = (struct magazine_kern *)req->bio->xrp_scratch_offset;
+	if (!ebpf_context->in_use || ebpf_context->done) {
+		/* finish traversal */
+		// printk("----finish traversal: in_use is %d, done is %d, iter is %d", 
+		// 								ebpf_context->in_use, ebpf_context->done,ebpf_context->iter );
+		// ebpf_dump_page((uint8_t *) ebpf_context, sizeof(struct magazine_kern));
+		if (!nvme_try_complete_req(req, cqe->status, cqe->result))
+			nvme_pci_complete_rq(req);
+		return;
+	}
+	loff_t data_len;
+	u64 disk_offset;
 
-extern atomic_long_t xrp_resubmit_level_nr;
-extern atomic_long_t xrp_resubmit_level_count;
+	/* address mapping */
+	// lba in 512B
+	disk_offset = ebpf_context->lba[ebpf_context->iter];
+	data_len = ebpf_context->size[ebpf_context->iter];
+	
+	nvme_req(req)->cmd = req->xrp_command;
+	req->bio->xrp_count += 1;
+	req->bio->bi_iter.bi_sector = disk_offset + req->bio->xrp_partition_start_sector;
+	req->__sector = req->bio->bi_iter.bi_sector;
+	
+	//zhengxd: slba (512B)
+	req->xrp_command->rw.slba = cpu_to_le64(nvme_sect_to_lba(req->q->queuedata, blk_rq_pos(req)));
+	req->xrp_command->rw.length = cpu_to_le16((data_len >> 9) - 1);
+	
+	//zhengxd: length(7 sector), addr(bytes)
+	void **list = nvme_pci_iod_list(req);
+	__le64 *prp_list = list[0];
+	uint32_t length = (req->xrp_command->rw.length + 1) << 9;
+	if(length == 4096){
+			req->xrp_command->rw.dptr.prp1 = prp_list[ebpf_context->iter];
+	}else{
+		printk("----nvme_handle_cqe: length dismatch error\n");
+		ebpf_dump_page((uint8_t *) ebpf_context, sizeof(struct magazine_kern));
+		if (!nvme_try_complete_req(req, cqe->status, cqe->result))
+				nvme_pci_complete_rq(req);
+		return;
+	} 
+	ebpf_context->iter++;
+	if(ebpf_context->iter > ebpf_context->max)
+		ebpf_context->done = 1;
 
-extern atomic_long_t xrp_extent_lookup_time;
-extern atomic_long_t xrp_extent_lookup_count;
+	nvme_submit_cmd(nvmeq, req->xrp_command, true);
+	kfree(nvme_work);
+}
+
 
 //zhengxd: process cqe, and submit another sqe;
 static inline void nvme_handle_cqe(struct nvme_queue *nvmeq, u16 idx)
@@ -1158,90 +1214,16 @@ static inline void nvme_handle_cqe(struct nvme_queue *nvmeq, u16 idx)
 		if (!nvme_try_complete_req(req, cqe->status, cqe->result))
 			nvme_pci_complete_rq(req);
 	} else {
-
-		struct magazine_kern *ebpf_context = (struct magazine_kern *)req->bio->xrp_scratch_offset;
-		if (!ebpf_context->in_use || ebpf_context->done) {
-			/* finish traversal */
-			// printk("----finish traversal: in_use is %d, done is %d, iter is %d", 
-			// 								ebpf_context->in_use, ebpf_context->done,ebpf_context->iter );
-			// ebpf_dump_page((uint8_t *) ebpf_context, sizeof(struct magazine_kern));
-			if (!nvme_try_complete_req(req, cqe->status, cqe->result))
-				nvme_pci_complete_rq(req);
-			return;
-		}
-		loff_t file_offset, data_len;
-		u64 disk_offset;
-		struct xrp_mapping mapping;
-
-		// /* verify version number */
-		if (req->bio->xrp_count > 1
-		    && req->bio->xrp_inode->i_op == &ext4_file_inode_operations) {
-			file_offset = req->bio->xrp_file_offset;
-			data_len = (req->xrp_command->rw.length + 1) << 9;
-			xrp_retrieve_mapping(req->bio->xrp_inode, file_offset, data_len, &mapping);
-			if (!mapping.exist || mapping.len < data_len || mapping.address & 0x1ff) {
-				printk("nvme_handle_cqe: failed to retrieve address mapping during verification with logical address 0x%llx, dump context\n", file_offset);
-				ebpf_dump_page((uint8_t *) ebpf_context, sizeof(struct bpf_xrp_kern));
-				if (!nvme_try_complete_req(req, cqe->status, cqe->result))
-					nvme_pci_complete_rq(req);
-				return;
-			} else if (mapping.version != req->bio->xrp_extent_version) {
-				printk("nvme_handle_cqe: version mismatch with logical address 0x%llx (expected %lld, got %lld), dump context\n",
-				       file_offset, req->bio->xrp_extent_version, mapping.version);
-				ebpf_dump_page((uint8_t *) ebpf_context, sizeof(struct bpf_xrp_kern));
-				if (!nvme_try_complete_req(req, cqe->status, cqe->result))
-					nvme_pci_complete_rq(req);
-				return;
-			}
-		}
-
-		/* address mapping */
-		file_offset = ebpf_context->addr[ebpf_context->iter];
-		data_len = ebpf_context->size[ebpf_context->iter] * 4096;
-		req->bio->xrp_file_offset = file_offset;
-		if (req->bio->xrp_inode->i_op == &ext4_file_inode_operations) {
-			xrp_retrieve_mapping(req->bio->xrp_inode, file_offset, data_len, &mapping);
-			if (!mapping.exist || mapping.len < data_len || mapping.address & 0x1ff) {
-				printk("----nvme_handle_cqe: failed to retrieve address mapping with logical address %llu, dump context\n", file_offset);
-				ebpf_dump_page((uint8_t *) ebpf_context, sizeof(struct magazine_kern));
-				if (!nvme_try_complete_req(req, cqe->status, cqe->result))
-					nvme_pci_complete_rq(req);
-				return;
-			} else {
-				req->bio->xrp_extent_version = mapping.version;
-				disk_offset = mapping.address;
-			}
-		} else {
-			/* no address translation, use direct map */
-			disk_offset = file_offset;
-		}
-		nvme_req(req)->cmd = req->xrp_command;
-		req->bio->xrp_count += 1;
-		req->bio->bi_iter.bi_sector = (disk_offset >> 9) + req->bio->xrp_partition_start_sector;
-		req->__sector = req->bio->bi_iter.bi_sector;
-		
-		//zhengxd: slba (512B)
-		req->xrp_command->rw.slba = cpu_to_le64(nvme_sect_to_lba(req->q->queuedata, blk_rq_pos(req)));
-		req->xrp_command->rw.length = cpu_to_le16((data_len >> 9) - 1);
-		
-		//zhengxd: length(7 sector), addr(bytes)
-		void **list = nvme_pci_iod_list(req);
-		__le64 *prp_list = list[0];
-		uint32_t length = (req->xrp_command->rw.length + 1) << 9;
-		if(length == 4096){
-				req->xrp_command->rw.dptr.prp1 = prp_list[ebpf_context->iter];
-		}else{
-			printk("----nvme_handle_cqe: length dismatch error\n");
-			ebpf_dump_page((uint8_t *) ebpf_context, sizeof(struct magazine_kern));
-			if (!nvme_try_complete_req(req, cqe->status, cqe->result))
-					nvme_pci_complete_rq(req);
-			return;
-		} 
-		ebpf_context->iter++;
-		if(ebpf_context->iter > ebpf_context->max)
-			ebpf_context->done = 1;
-		
-		nvme_submit_cmd(nvmeq, req->xrp_command, true);
+		struct nvme_work *work;
+		work = kmalloc(sizeof(*work), GFP_ATOMIC);
+		if (!work)
+        	return;
+		work->nvmeq = nvmeq;
+		work->idx = idx;
+		work->req = req;
+		work->write_sq = true;
+		INIT_WORK(&work->work, nvme_submit_work);
+		queue_work(nvme_resubmit_wq, &work->work);
 	}
 }
 
@@ -1730,6 +1712,8 @@ static int nvme_alloc_queue(struct nvme_dev *dev, int qid, int depth)
 
 	nvmeq->sqes = qid ? dev->io_sqes : NVME_ADM_SQES;
 	nvmeq->q_depth = depth;
+	//zhengxd: print queue depth
+	printk("----nvmeq depth is %d----\n",nvmeq->q_depth);
 	nvmeq->cqes = dma_alloc_coherent(dev->dev, CQ_SIZE(nvmeq),
 					 &nvmeq->cq_dma_addr, GFP_KERNEL);
 	if (!nvmeq->cqes)
@@ -1944,7 +1928,7 @@ static int nvme_pci_configure_admin_queue(struct nvme_dev *dev)
 	result = nvme_disable_ctrl(&dev->ctrl);
 	if (result < 0)
 		return result;
-
+	//zhengxd: AQ Depth: 32
 	result = nvme_alloc_queue(dev, 0, NVME_AQ_DEPTH);
 	if (result)
 		return result;
@@ -1981,6 +1965,8 @@ static int nvme_create_io_queues(struct nvme_dev *dev)
 	int ret = 0;
 
 	for (i = dev->ctrl.queue_count; i <= dev->max_qid; i++) {
+		//zhengxd: print queue depth
+		printk("----create io queue %d, depth is %d----\n",i,dev->q_depth);
 		if (nvme_alloc_queue(dev, i, dev->q_depth)) {
 			ret = -ENOMEM;
 			break;
@@ -2615,6 +2601,8 @@ static int nvme_pci_enable(struct nvme_dev *dev)
 	dev->ctrl.sqsize = dev->q_depth - 1; /* 0's based queue depth */
 	dev->db_stride = 1 << NVME_CAP_STRIDE(dev->ctrl.cap);
 	dev->dbs = dev->bar + 4096;
+	//zhengxd: print dev info
+	printk("----cap is %lld, q_depth is %d, io_queue_depth is %d\n",dev->ctrl.cap,dev->q_depth,io_queue_depth);
 
 	/*
 	 * Some Apple controllers require a non-standard SQE size.

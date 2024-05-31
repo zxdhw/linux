@@ -4,6 +4,7 @@
  * Copyright (c) 2011-2014, Intel Corporation.
  */
 
+#include "linux/workqueue.h"
 #include <linux/blkdev.h>
 #include <linux/blk-mq.h>
 #include <linux/compat.h>
@@ -74,6 +75,9 @@ MODULE_PARM_DESC(streams, "turn on support for Streams write directives");
  */
 struct workqueue_struct *nvme_wq;
 EXPORT_SYMBOL_GPL(nvme_wq);
+
+struct workqueue_struct *nvme_resubmit_wq;
+EXPORT_SYMBOL_GPL(nvme_resubmit_wq);
 
 struct workqueue_struct *nvme_reset_wq;
 EXPORT_SYMBOL_GPL(nvme_reset_wq);
@@ -4769,6 +4773,11 @@ static int __init nvme_core_init(void)
 			NVME_MINORS, "nvme");
 	if (result < 0)
 		goto destroy_delete_wq;
+	
+	nvme_resubmit_wq = alloc_workqueue("nvme-req-wq",
+			WQ_UNBOUND | WQ_HIGHPRI |WQ_CPU_INTENSIVE| WQ_MAX_ACTIVE | WQ_SYSFS, 0);
+	if (!nvme_resubmit_wq)
+		goto destory_resubmit_wq;
 
 	nvme_class = class_create(THIS_MODULE, "nvme");
 	if (IS_ERR(nvme_class)) {
@@ -4790,6 +4799,8 @@ unregister_chrdev:
 	unregister_chrdev_region(nvme_ctrl_base_chr_devt, NVME_MINORS);
 destroy_delete_wq:
 	destroy_workqueue(nvme_delete_wq);
+destory_resubmit_wq:
+	destroy_workqueue(nvme_resubmit_wq);
 destroy_reset_wq:
 	destroy_workqueue(nvme_reset_wq);
 destroy_wq:
@@ -4806,6 +4817,7 @@ static void __exit nvme_core_exit(void)
 	destroy_workqueue(nvme_delete_wq);
 	destroy_workqueue(nvme_reset_wq);
 	destroy_workqueue(nvme_wq);
+	destroy_workqueue(nvme_resubmit_wq);
 	ida_destroy(&nvme_instance_ida);
 }
 

@@ -1454,7 +1454,7 @@ static int aio_prep_rw(struct kiocb *req, const struct iocb *iocb)
 	req->ki_pos = iocb->aio_offset;
 	//zhengxd: new: data_len(aio_reserved2) init
 	if(req->xrp_enabled){
-		req->x2rp_data_len = iocb->aio_x2rp_dsize;
+		req->data_len = iocb->aio_dsize;
 	}
 	req->ki_flags = iocb_flags(req->ki_filp);
 	if (iocb->aio_flags & IOCB_FLAG_RESFD)
@@ -1489,7 +1489,9 @@ static ssize_t aio_setup_rw(int rw, const struct iocb *iocb,
 		struct iov_iter *iter)
 {
 	void __user *buf = (void __user *)(uintptr_t)iocb->aio_buf;
+	//zhengxd: buff len 
 	size_t len = iocb->aio_nbytes;
+	//zhengxd: fixme: check: aio_nbytes > dsize ?
 
 	if (!vectored) {
 		//zhengxd: packaging buffer in iov & iter, use *buf and len
@@ -1970,7 +1972,7 @@ static int aio_read_xrp(struct kiocb *req, const struct iocb *iocb,
 	req->xrp_scratch_buf = scratch_buf;
 	req->xrp_bpf_fd = bpf_fd;
 	req->xrp_enabled = true;
-	// zhengxd: new: kiocb init x2rp_data_len
+	// zhengxd: new: kiocb init data_len
 	ret = aio_prep_rw(req, iocb);
 	if (ret)
 		return ret;
@@ -1984,8 +1986,8 @@ static int aio_read_xrp(struct kiocb *req, const struct iocb *iocb,
 	ret = aio_setup_rw(READ, iocb, &iovec, vectored, compat, &iter);
 	if (ret < 0)
 		return ret;
-	//zhengxd: new: x2rp_data_len; old: iov_iter_count(&iter);
-	ret = rw_verify_area(READ, file, &req->ki_pos, req->x2rp_data_len);
+	//zhengxd: new: data_len; old: iov_iter_count(&iter);
+	ret = rw_verify_area(READ, file, &req->ki_pos, req->data_len);
 	if (!ret)
 		aio_rw_done(req, call_read_iter(file, req, &iter));
 	kfree(iovec);
@@ -2125,7 +2127,7 @@ SYSCALL_DEFINE5(io_submit_xrp, aio_context_t, ctx_id, long, nr, struct iocb __us
 	struct kioctx *ctx;
 	long ret = 0;
 	int i = 0;
-	//zhengxd: comment plug
+	//zhengxd: disbale plug
 	// struct blk_plug plug;
 
 	if (unlikely(nr < 0))
@@ -2139,7 +2141,7 @@ SYSCALL_DEFINE5(io_submit_xrp, aio_context_t, ctx_id, long, nr, struct iocb __us
 
 	if (nr > ctx->nr_events)
 		nr = ctx->nr_events;
-	// zhengxd：new: in v1.0, x2rp disable plug
+	// zhengxd: disable plug
 	// if (nr > AIO_PLUG_THRESHOLD)
 	// 	blk_start_plug(&plug);
 	for (i = 0; i < nr; i++) {

@@ -72,7 +72,7 @@ static const struct kernel_param_ops io_queue_depth_ops = {
 };
 
 //zhengxd: io queue depth is 1024
-static unsigned int io_queue_depth = 4096;
+static unsigned int io_queue_depth = 1024;
 module_param_cb(io_queue_depth, &io_queue_depth_ops, &io_queue_depth, 0644);
 MODULE_PARM_DESC(io_queue_depth, "set io queue depth, should >= 2");
 
@@ -1043,10 +1043,18 @@ static blk_status_t nvme_queue_rq(struct blk_mq_hw_ctx *hctx,
 	 */
 	if (unlikely(!test_bit(NVMEQ_ENABLED, &nvmeq->flags)))
 		return BLK_STS_IOERR;
-	// zhengxd: init slba、length 
+	
+	//zhengxd: setup qid(req->bio is neccssary)
+	if(req->bio && req->bio->xrp_enabled){
+		// cpu0 -> hctx0 -> nvmeq1: struct nvme_queue *nvmeq = &dev->queues[hctx_idx + 1];
+		req->bio->qid += ((nvmeq->qid) << 10);
+	} 
+	
+	//zhengxd: init slba、length 
 	ret = nvme_setup_cmd(ns, req, cmndp);
 	if (ret)
 		return ret;
+
 	// zhengxd: use sgl map
 	if (blk_rq_nr_phys_segments(req)) {
 		ret = nvme_map_data(dev, req, cmndp);
@@ -1058,10 +1066,6 @@ static blk_status_t nvme_queue_rq(struct blk_mq_hw_ctx *hctx,
 		if (ret)
 			goto out_unmap_data;
 	}
-	//zhengxd: submit cmnd (nvme queue rq error)
-	// if(req->bio->xrp_enabled){
-	// 	printk("----nvme_submit_cmd----\n");
-	// }
 	blk_mq_start_request(req);
 
 	nvme_submit_cmd(nvmeq, cmndp, bd->last);
@@ -1074,15 +1078,13 @@ out_free_cmd:
 }
 
 
-extern atomic_long_t xrp_ebpf_time;
-extern atomic_long_t xrp_ebpf_count;
-
 struct nvme_work {
     struct work_struct work;
     struct nvme_queue *nvmeq;
+	struct nvme_completion *cqe;
     struct request *req;
-	u16 idx;
-    bool write_sq;
+	// u16 idx;
+    // bool write_sq;
 };
 
 static void nvme_pci_complete_rq(struct request *req)
@@ -1127,8 +1129,7 @@ static void nvme_submit_work(struct work_struct *work){
 	struct nvme_work *nvme_work = container_of(work, struct nvme_work, work);
 	struct nvme_queue *nvmeq = nvme_work->nvmeq;
 	struct request *req =  nvme_work->req;
-	u16 idx = nvme_work->idx;
-	struct nvme_completion *cqe = &nvmeq->cqes[idx];
+	struct nvme_completion *cqe = nvme_work->cqe;
 
 
 	struct magazine_kern *ebpf_context = (struct magazine_kern *)req->bio->xrp_scratch_offset;
@@ -1136,7 +1137,6 @@ static void nvme_submit_work(struct work_struct *work){
 		/* finish traversal */
 		// printk("----finish traversal: in_use is %d, done is %d, iter is %d", 
 		// 								ebpf_context->in_use, ebpf_context->done,ebpf_context->iter );
-		// ebpf_dump_page((uint8_t *) ebpf_context, sizeof(struct magazine_kern));
 		if (!nvme_try_complete_req(req, cqe->status, cqe->result))
 			nvme_pci_complete_rq(req);
 		return;
@@ -1165,7 +1165,7 @@ static void nvme_submit_work(struct work_struct *work){
 	if(length == 4096){
 			req->xrp_command->rw.dptr.prp1 = prp_list[ebpf_context->iter];
 	}else{
-		printk("----nvme_handle_cqe: length dismatch error\n");
+		printk("----nvme_submit_work: length dismatch error\n");
 		ebpf_dump_page((uint8_t *) ebpf_context, sizeof(struct magazine_kern));
 		if (!nvme_try_complete_req(req, cqe->status, cqe->result))
 				nvme_pci_complete_rq(req);
@@ -1174,6 +1174,24 @@ static void nvme_submit_work(struct work_struct *work){
 	ebpf_context->iter++;
 	if(ebpf_context->iter > ebpf_context->max)
 		ebpf_context->done = 1;
+	
+	//zhengxd： update sqqueue 
+	// unsigned int cpu = __smp_processor_id();
+	unsigned int cpu = raw_smp_processor_id();
+	printk("----nvme_submit_work: cpu id is %d----\n",cpu);
+	// if(cpu != 0){
+	nvmeq = &nvme_work->nvmeq->dev->queues[cpu+1];
+		// if(cpu == 11){
+		// 	printk("----resubmit to io thread\n");
+		// }
+	// }
+	if(!nvmeq){
+		printk("----nvme_submit_work: nvmeq error\n");
+		ebpf_dump_page((uint8_t *) ebpf_context, sizeof(struct magazine_kern));
+		if (!nvme_try_complete_req(req, cqe->status, cqe->result))
+				nvme_pci_complete_rq(req);
+		return;
+	}
 
 	nvme_submit_cmd(nvmeq, req->xrp_command, true);
 	kfree(nvme_work);
@@ -1187,27 +1205,39 @@ static inline void nvme_handle_cqe(struct nvme_queue *nvmeq, u16 idx)
 	__u16 command_id = READ_ONCE(cqe->command_id);
 	struct request *req;
 
+	//zhegnxd: command id < 1024
+	struct nvme_queue *nvmeq_m = nvmeq;
+	u16 qid_m = command_id >> 10;
+	if(qid_m != 0){
+		nvmeq_m = &(nvmeq->dev->queues[qid_m]);
+		// printk("----nvme qid is %d----\n",qid_m);
+	}
+	if(io_queue_depth <= 1024){
+		command_id &= 0x3ff;
+	}
+	
+	
 	/*
 	 * AEN requests are special as they don't time out and can
 	 * survive any kind of queue freeze and often don't respond to
 	 * aborts.  We don't even bother to allocate a struct request
 	 * for them but rather special case them here.
 	 */
-	if (unlikely(nvme_is_aen_req(nvmeq->qid, command_id))) {
-		nvme_complete_async_event(&nvmeq->dev->ctrl,
+	if (unlikely(nvme_is_aen_req(nvmeq_m->qid, command_id))) {
+		nvme_complete_async_event(&nvmeq_m->dev->ctrl,
 				cqe->status, &cqe->result);
 		return;
 	}
 
-	req = blk_mq_tag_to_rq(nvme_queue_tagset(nvmeq), command_id);
+	req = blk_mq_tag_to_rq(nvme_queue_tagset(nvmeq_m), command_id);
 	if (unlikely(!req)) {
-		dev_warn(nvmeq->dev->ctrl.device,
+		dev_warn(nvmeq_m->dev->ctrl.device,
 			"invalid id %d completed on queue %d\n",
 			command_id, le16_to_cpu(cqe->sq_id));
 		return;
 	}
 
-	trace_nvme_sq(req, cqe->sq_head, nvmeq->sq_tail);
+	trace_nvme_sq(req, cqe->sq_head, nvmeq_m->sq_tail);
 
 	if (!req->bio || !req->bio->xrp_enabled) {
 		/* normal completion path */
@@ -1219,10 +1249,14 @@ static inline void nvme_handle_cqe(struct nvme_queue *nvmeq, u16 idx)
 		if (!work)
         	return;
 		work->nvmeq = nvmeq;
-		work->idx = idx;
+		work->cqe = cqe;
+		// work->idx = idx;
 		work->req = req;
-		work->write_sq = true;
+		// work->write_sq = true;
 		INIT_WORK(&work->work, nvme_submit_work);
+		// zhengxd: work on a fixed cpu
+		// queue_work_on(13,nvme_resubmit_wq, &work->work);
+		// zhengxd: work on a random cpu
 		queue_work(nvme_resubmit_wq, &work->work);
 	}
 }

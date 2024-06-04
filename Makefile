@@ -2,7 +2,7 @@
 VERSION = 5
 PATCHLEVEL = 12
 SUBLEVEL = 0
-EXTRAVERSION =-magazine
+EXTRAVERSION =-batch
 NAME = Frozen Wasteland
 
 # *DOCUMENTATION*

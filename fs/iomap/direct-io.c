@@ -611,7 +611,7 @@ __iomap_dio_rw(struct kiocb *iocb, struct iov_iter *iter,
 			goto out_free_dio;
 		iomap_flags |= IOMAP_OVERWRITE_ONLY;
 	}
-
+	//zhengxd: fixme : hitchhike need wait
 	ret = filemap_write_and_wait_range(mapping, pos, end);
 	if (ret)
 		goto out_free_dio;

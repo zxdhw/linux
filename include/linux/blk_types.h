@@ -6,6 +6,7 @@
 #ifndef __LINUX_BLK_TYPES_H
 #define __LINUX_BLK_TYPES_H
 
+#include "asm-generic/int-ll64.h"
 #include "linux/workqueue.h"
 #include <linux/types.h>
 #include <linux/bvec.h>
@@ -285,7 +286,7 @@ struct bio {
 	struct page		*xrp_scratch_page;
 	u64			*xrp_scratch_offset;
 	struct bpf_prog		*xrp_bpf_prog;
-
+	u16			qid;
 	u64			xrp_extent_version;
 	loff_t			xrp_file_offset;
 

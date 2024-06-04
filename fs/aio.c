@@ -1987,6 +1987,7 @@ static int aio_read_xrp(struct kiocb *req, const struct iocb *iocb,
 	if (ret < 0)
 		return ret;
 	//zhengxd: new: data_len; old: iov_iter_count(&iter);
+	//zhengxd: fixme: add hitchhike check
 	ret = rw_verify_area(READ, file, &req->ki_pos, req->data_len);
 	if (!ret)
 		aio_rw_done(req, call_read_iter(file, req, &iter));
@@ -2143,7 +2144,7 @@ SYSCALL_DEFINE5(io_submit_xrp, aio_context_t, ctx_id, long, nr, struct iocb __us
 		nr = ctx->nr_events;
 	// zhengxd: disable plug
 	// if (nr > AIO_PLUG_THRESHOLD)
-	// 	blk_start_plug(&plug);
+		// blk_start_plug(&plug);
 	for (i = 0; i < nr; i++) {
 		// zhengxd: every aio req has a scratch_buf, like __user* iocb
 		char __user * scratch_buf;
@@ -2152,8 +2153,6 @@ SYSCALL_DEFINE5(io_submit_xrp, aio_context_t, ctx_id, long, nr, struct iocb __us
 			ret = -EFAULT;
 			break;
 		}
-		// printk(KERN_DEBUG "io submit: ptr is %p\n", scratch_buf);
-		// printk("io submit: value is %p\n", &scratch_buf);
 		struct iocb __user *user_iocb;
 		if (unlikely(get_user(user_iocb, iocbpp + i))) {
 			ret = -EFAULT;
@@ -2166,7 +2165,7 @@ SYSCALL_DEFINE5(io_submit_xrp, aio_context_t, ctx_id, long, nr, struct iocb __us
 	}
 	// zhengxd: new: in x2rp V1.0, we disable plug
 	// if (nr > AIO_PLUG_THRESHOLD)
-	// 	blk_finish_plug(&plug);
+		// blk_finish_plug(&plug);
 
 	percpu_ref_put(&ctx->users);
 	return i ? i : ret;

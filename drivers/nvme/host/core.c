@@ -944,7 +944,12 @@ blk_status_t nvme_setup_cmd(struct nvme_ns *ns, struct request *req,
 		return BLK_STS_IOERR;
 	}
 
-	cmd->common.command_id = req->tag;
+	if(req->bio && req->bio->xrp_enabled){
+		cmd->common.command_id += (req->bio->qid + req->tag);
+	} else {
+		cmd->common.command_id = req->tag;
+	}
+	
 	trace_nvme_setup_cmd(req, cmd);
 	return ret;
 }
@@ -4775,7 +4780,7 @@ static int __init nvme_core_init(void)
 		goto destroy_delete_wq;
 	
 	nvme_resubmit_wq = alloc_workqueue("nvme-req-wq",
-			WQ_UNBOUND | WQ_HIGHPRI |WQ_CPU_INTENSIVE| WQ_MAX_ACTIVE | WQ_SYSFS, 0);
+			WQ_HIGHPRI | WQ_CPU_INTENSIVE | WQ_SYSFS, 512);
 	if (!nvme_resubmit_wq)
 		goto destory_resubmit_wq;
 

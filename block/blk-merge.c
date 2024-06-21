@@ -253,7 +253,7 @@ static struct bio *blk_bio_segment_split(struct request_queue *q,
 	const unsigned max_sectors = get_max_io_size(q, bio);
 	const unsigned max_segs = queue_max_segments(q);
 
-	if(bio->xrp_enabled){
+	if(bio->hit_enabled){
 		bio_for_each_bvec_xrp(bv, bio, iter) {
 
 			//zhengxd: max_sectors: 2560
@@ -507,7 +507,7 @@ static int __blk_bios_map_sg(struct request_queue *q, struct bio *bio,
 	int nsegs = 0;
 	bool new_bio = false;
 
-	if(bio->xrp_enabled){
+	if(bio->hit_enabled){
 		for_each_bio(bio) {
 			bio_for_each_bvec_xrp(bvec, bio, iter) {
 	

@@ -4,8 +4,10 @@
  * Copyright (c) 2016-2018 Christoph Hellwig.
  */
 #include "linux/kern_levels.h"
+#include "linux/ktime.h"
 #include "linux/mm.h"
 #include "linux/printk.h"
+#include "linux/timekeeping.h"
 #include <linux/module.h>
 #include <linux/compiler.h>
 #include <linux/fs.h>
@@ -63,6 +65,10 @@ int iomap_dio_iopoll(struct kiocb *kiocb, bool spin)
 }
 EXPORT_SYMBOL_GPL(iomap_dio_iopoll);
 
+extern atomic_long_t fs_time;
+extern atomic_long_t fs_count;
+extern ktime_t fs_start;
+
 static void iomap_dio_submit_bio(struct iomap_dio *dio, struct iomap *iomap,
 		struct bio *bio, loff_t pos)
 {
@@ -70,6 +76,13 @@ static void iomap_dio_submit_bio(struct iomap_dio *dio, struct iomap *iomap,
 
 	if (dio->iocb->ki_flags & IOCB_HIPRI)
 		bio_set_polled(bio, dio->iocb);
+	
+	// zhengxd: kernel stat
+	// if(bio->hit_enabled){
+	// atomic_long_inc(&fs_count);
+	// 	printk("----fs io time is %lld----\n",ktime_sub(ktime_get(), fs_start));
+	// atomic_long_add(ktime_sub(ktime_get(), fs_start), &fs_time);
+	// }
 
 	dio->submit.last_queue = bdev_get_queue(iomap->bdev);
 	if (dio->dops && dio->dops->submit_io)
@@ -78,6 +91,7 @@ static void iomap_dio_submit_bio(struct iomap_dio *dio, struct iomap *iomap,
 				iomap, bio, pos);
 	else
 		dio->submit.cookie = submit_bio(bio);
+
 }
 
 ssize_t iomap_dio_complete(struct iomap_dio *dio)
@@ -159,7 +173,7 @@ static void iomap_dio_bio_end_io(struct bio *bio)
 	struct iomap_dio *dio = bio->bi_private;
 	bool should_dirty = (dio->flags & IOMAP_DIO_DIRTY);
 
-	if (bio->xrp_enabled) {
+	if (bio->hit_enabled) {
 		put_page(bio->xrp_scratch_page);
 		bio->xrp_scratch_page = NULL;
 		// bpf_prog_put(bio->xrp_bpf_prog);
@@ -239,6 +253,12 @@ iomap_dio_bio_opflags(struct iomap_dio *dio, struct iomap *iomap, bool use_fua)
 
 	return opflags;
 }
+extern atomic_long_t iomap_time;
+extern atomic_long_t iomap_count;
+extern atomic_long_t get_page_time;
+extern atomic_long_t get_page_count;
+extern atomic_long_t bio_time;
+extern atomic_long_t bio_count;
 
 static loff_t
 iomap_dio_bio_actor(struct inode *inode, loff_t pos, loff_t length,
@@ -289,7 +309,7 @@ iomap_dio_bio_actor(struct inode *inode, loff_t pos, loff_t length,
 	 */
 	orig_count = iov_iter_count(dio->submit.iter);
 	//zhengxd： disable truncate
-	if(!dio->iocb->xrp_enabled)
+	if(!dio->iocb->hit_enabled)
 		iov_iter_truncate(dio->submit.iter, length);
 
 	if (!iov_iter_count(dio->submit.iter))
@@ -317,6 +337,8 @@ iomap_dio_bio_actor(struct inode *inode, loff_t pos, loff_t length,
 			copied = ret = 0;
 			goto out;
 		}
+		//zhengxd: kernel stat
+		// ktime_t bio_start = ktime_get();
 
 		bio = bio_alloc(GFP_KERNEL, nr_pages);
 		bio_set_dev(bio, iomap->bdev);
@@ -330,15 +352,28 @@ iomap_dio_bio_actor(struct inode *inode, loff_t pos, loff_t length,
 		
 
 		//zhengxd: xrp init
-		//zhengxd: bio_iov_iter_get_page need xrp_enabled
-		bio->xrp_enabled = dio->iocb->xrp_enabled;
+		//zhengxd: bio_iov_iter_get_page need hit_enabled
+		bio->hit_enabled = dio->iocb->hit_enabled;
 		bio->xrp_inode = dio->iocb->ki_filp->f_inode;
 		bio->xrp_partition_start_sector = 0;
 		bio->xrp_count = 1;
 		bio->xrp_buffer_size = nr_pages;
 
-		ret = bio_iov_iter_get_pages(bio, dio->submit.iter);
+		// zhengxd: kernel stat
+		// if(bio->hit_enabled){
+			// atomic_long_inc(&bio_count);
+			// atomic_long_add(ktime_sub(ktime_get(), bio_start), &bio_time);
+		// }
 
+		// zhengxd: kernel stat
+		// ktime_t get_page_start = ktime_get();
+
+		ret = bio_iov_iter_get_pages(bio, dio->submit.iter);
+		// zhengxd: kernel stat
+		// if(bio->hit_enabled){
+			// atomic_long_inc(&get_page_count);
+			// atomic_long_add(ktime_sub(ktime_get(), get_page_start), &get_page_time);
+		// }
 		if (unlikely(ret)) {
 			/*
 			 * We have to stop part way through an IO. We must fall
@@ -350,26 +385,27 @@ iomap_dio_bio_actor(struct inode *inode, loff_t pos, loff_t length,
 			goto zero_tail;
 		}
 
-		// bio->xrp_enabled = dio->iocb->xrp_enabled;
+		// bio->hit_enabled = dio->iocb->hit_enabled;
 		// bio->xrp_inode = dio->iocb->ki_filp->f_inode;
 		// bio->xrp_partition_start_sector = 0;
 		// bio->xrp_count = 1;
 		//zhengxd: init bi_size with x2rp_data_len
-		if(bio->xrp_enabled) {
+		if(bio->hit_enabled) {
 			bio->bi_iter.bi_size = dio->iocb->data_len;
 		}
-		if (bio->xrp_enabled) {
-			if (get_user_pages_fast(dio->iocb->xrp_scratch_buf, 1, FOLL_WRITE, &bio->xrp_scratch_page) != 1) {
+		if (bio->hit_enabled) {
+			if (get_user_pages_fast(dio->iocb->hit_scratch_buf, 1, FOLL_WRITE, &bio->xrp_scratch_page) != 1) {
 				printk("iomap_dio_bio_actor: failed to get scratch page\n");
-				bio->xrp_enabled = false;
+				bio->hit_enabled = false;
 			}
 			loff_t offset, len;
-			offset = (unsigned long)dio->iocb->xrp_scratch_buf & (PAGE_SIZE - 1);
+			offset = (unsigned long)dio->iocb->hit_scratch_buf & (PAGE_SIZE - 1);
     		bio->xrp_scratch_offset= kmap(bio->xrp_scratch_page) + offset;
 
-			//zhengxd: in batch 1.0 , the file is continuous, Fixme in next version
+			//zhengxd: kernel stat
+			// ktime_t iomap_start = ktime_get();
 			int iter;
-			struct magazine_kern *ebpf_context = (struct magazine_kern *)bio->xrp_scratch_offset;
+			struct hitchhike_kern *ebpf_context = (struct hitchhike_kern *)bio->xrp_scratch_offset;
 			for(iter = 0; iter <= ebpf_context->max; iter++){
 				len = ebpf_context->size[iter];
 				pos = ebpf_context->addr[iter];
@@ -380,20 +416,13 @@ iomap_dio_bio_actor(struct inode *inode, loff_t pos, loff_t length,
 					return ret;
 				// lba in 512B
 				ebpf_context->lba[iter] = iomap_sector(&iomap_t, pos);
+				// zhengxd: kernel stat
+				// atomic_long_inc(&iomap_count);
 			}
+			// zhengxd: kernel stat
+			// atomic_long_add(ktime_sub(ktime_get(), iomap_start), &iomap_time);
 		}
 
-		
-		// if (bio->xrp_enabled) {
-		// 	bio->xrp_bpf_prog = bpf_prog_get_type(dio->iocb->xrp_bpf_fd, BPF_PROG_TYPE_XRP);
-		// 	if (IS_ERR(bio->xrp_bpf_prog)) {
-		// 		printk("iomap_dio_bio_actor: failed to get bpf prog\n");
-		// 		bio->xrp_bpf_prog = NULL;
-		// 		put_page(bio->xrp_scratch_page);
-		// 		bio->xrp_scratch_page = NULL;
-		// 		bio->xrp_enabled = false;
-		// 	}
-		// }
 		//zhengxd: nr_pages > 256 (error)
 		n = bio->bi_iter.bi_size;
 		if (dio->flags & IOMAP_DIO_WRITE) {
@@ -411,7 +440,7 @@ iomap_dio_bio_actor(struct inode *inode, loff_t pos, loff_t length,
 						 BIO_MAX_VECS);
 		iomap_dio_submit_bio(dio, iomap, bio, pos);
 		pos += n;
-		// if(bio->xrp_enabled){
+		// if(bio->hit_enabled){
 		// 	printk(KERN_DEBUG "----iomap: nr_pages is %d----\n",nr_pages);
 		// }
 	} while (nr_pages);
@@ -536,7 +565,7 @@ __iomap_dio_rw(struct kiocb *iocb, struct iov_iter *iter,
 	loff_t pos = iocb->ki_pos;
 	// loff_t end = iocb->ki_pos + data_len - 1, ret = 0;
 	loff_t end, ret = 0;
-	if(iocb->xrp_enabled){
+	if(iocb->hit_enabled){
 		//zhengxd: new end init
 		end = iocb->ki_pos + data_len - 1;
 	} else {
@@ -553,7 +582,7 @@ __iomap_dio_rw(struct kiocb *iocb, struct iov_iter *iter,
 	if (!count)
 		return NULL;
 	//zhengxd: datalen assert
-	if(iocb->xrp_enabled && !data_len)
+	if(iocb->hit_enabled && !data_len)
 		return NULL;
 
 	dio = kmalloc(sizeof(*dio), GFP_KERNEL);
@@ -577,7 +606,7 @@ __iomap_dio_rw(struct kiocb *iocb, struct iov_iter *iter,
 		if (pos >= dio->i_size)
 			goto out_free_dio;
 		// zhengxd: set dirty flag, x2rp dont set
-		if (iter_is_iovec(iter) && !iocb->xrp_enabled)
+		if (iter_is_iovec(iter) && !iocb->hit_enabled)
 			dio->flags |= IOMAP_DIO_DIRTY;
 	} else {
 		iomap_flags |= IOMAP_WRITE;
@@ -643,7 +672,7 @@ __iomap_dio_rw(struct kiocb *iocb, struct iov_iter *iter,
 		//zhengxd: pass datalen instead of buffer count； buffer count pass with dio->submit_iter
 		// ret = iomap_apply(inode, pos, data_len, iomap_flags, ops, dio,
 		// 					iomap_dio_actor);
-		if(iocb->xrp_enabled){
+		if(iocb->hit_enabled){
 			ret = iomap_apply(inode, pos, data_len, iomap_flags, ops, dio,
 					iomap_dio_actor);
 		}else{
@@ -674,7 +703,7 @@ __iomap_dio_rw(struct kiocb *iocb, struct iov_iter *iter,
 	 *in V1.0 we just ignore this problem , and set host io is 4K
 	 *so, the do-while loop just execute once
 	 */
-		if(iocb->xrp_enabled){
+		if(iocb->hit_enabled){
 			iov_iter_reexpand(iter, 0);
 		}
 	} while ((count = iov_iter_count(iter)) > 0);
@@ -743,7 +772,7 @@ iomap_dio_rw(struct kiocb *iocb, struct iov_iter *iter,
 		unsigned int dio_flags)
 {
 	struct iomap_dio *dio;
-	if(iocb->xrp_enabled){
+	if(iocb->hit_enabled){
 		iocb->ops = ops;
 	}
 

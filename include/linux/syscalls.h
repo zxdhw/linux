@@ -70,6 +70,7 @@ struct clone_args;
 struct open_how;
 struct mount_attr;
 struct xrp_stats;
+struct hit_stats;
 
 #include <linux/types.h>
 #include <linux/aio_abi.h>
@@ -315,7 +316,7 @@ asmlinkage long sys_io_setup(unsigned nr_reqs, aio_context_t __user *ctx);
 asmlinkage long sys_io_destroy(aio_context_t ctx);
 asmlinkage long sys_io_submit(aio_context_t, long,
 			struct iocb __user * __user *);
-asmlinkage long sys_io_submit_xrp(aio_context_t, long, struct iocb __user * __user *,
+asmlinkage long sys_io_submit_hit(aio_context_t, long, struct iocb __user * __user *,
 										unsigned int, char __user * __user *);
 asmlinkage long sys_io_cancel(aio_context_t ctx_id, struct iocb __user *iocb,
 			      struct io_event __user *result);
@@ -1370,6 +1371,7 @@ long compat_ksys_semtimedop(int semid, struct sembuf __user *tsems,
 			    const struct old_timespec32 __user *timeout);
 
 asmlinkage long sys_print_xrp_stats(struct xrp_stats __user *buf);
+asmlinkage long sys_print_hit_stats(struct hit_stats __user *buf);
 asmlinkage long sys_test_xrp(char __user *data_buf, char __user *scratch_buf, unsigned int bpf_fd);
 
 int __sys_getsockopt(int fd, int level, int optname, char __user *optval,

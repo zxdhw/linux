@@ -428,8 +428,8 @@ static ssize_t new_sync_read_xrp(struct file *filp, char __user *data_buf, size_
 
 	init_sync_kiocb(&kiocb, filp);
 	kiocb.ki_pos = (ppos ? *ppos : 0);
-	kiocb.xrp_enabled = true;
-	kiocb.xrp_scratch_buf = scratch_buf;
+	kiocb.hit_enabled = true;
+	kiocb.hit_scratch_buf = scratch_buf;
 	kiocb.xrp_bpf_fd = bpf_fd;
 	iov_iter_init(&iter, READ, &iov, 1, len);
 

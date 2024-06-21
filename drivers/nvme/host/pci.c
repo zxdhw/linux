@@ -5,8 +5,10 @@
  */
 
 #include "linux/kern_levels.h"
+#include "linux/ktime.h"
 #include "linux/nvme.h"
 #include "linux/scatterlist.h"
+#include "linux/timekeeping.h"
 #include <linux/acpi.h>
 #include <linux/aer.h>
 #include <linux/async.h>
@@ -498,6 +500,12 @@ static inline void nvme_write_sq_db(struct nvme_queue *nvmeq, bool write_sq)
 	nvmeq->last_sq_tail = nvmeq->sq_tail;
 }
 
+extern atomic_long_t sq_cpy_time;
+extern atomic_long_t sq_cpy_count;
+extern atomic_long_t sq_write_time;
+extern atomic_long_t sq_write_count;
+extern atomic_long_t lock_time;
+extern atomic_long_t lock_count;
 /**
  * nvme_submit_cmd() - Copy a command into a queue and ring the doorbell
  * @nvmeq: The queue to use
@@ -507,14 +515,28 @@ static inline void nvme_write_sq_db(struct nvme_queue *nvmeq, bool write_sq)
 static void nvme_submit_cmd(struct nvme_queue *nvmeq, struct nvme_command *cmd,
 			    bool write_sq)
 {
+	// ktime_t lock_start = ktime_get();
 	// unsigned long flags;
 	// spin_lock_irqsave(&nvmeq->sq_lock, flags);
 	spin_lock(&nvmeq->sq_lock);
+
+	// atomic_long_inc(&lock_count);
+	// atomic_long_add(ktime_sub(ktime_get(), lock_start), &lock_time);
+
+	//zhengxd: kernel stat
+	// ktime_t sq_cpy_start = ktime_get();
 	memcpy(nvmeq->sq_cmds + (nvmeq->sq_tail << nvmeq->sqes),
 	       cmd, sizeof(*cmd));
 	if (++nvmeq->sq_tail == nvmeq->q_depth)
 		nvmeq->sq_tail = 0;
+	// atomic_long_inc(&sq_cpy_count);
+	// atomic_long_add(ktime_sub(ktime_get(), sq_cpy_start), &sq_cpy_time);
+	
+	// ktime_t sq_write_start = ktime_get();
 	nvme_write_sq_db(nvmeq, write_sq);
+	// atomic_long_inc(&sq_write_count);
+	// atomic_long_add(ktime_sub(ktime_get(), sq_write_start), &sq_write_time);
+
 	spin_unlock(&nvmeq->sq_lock);
 	// spin_unlock_irqrestore(&nvmeq->sq_lock, flags);
 }
@@ -605,6 +627,7 @@ static void nvme_unmap_data(struct nvme_dev *dev, struct request *req)
 {
 	struct nvme_iod *iod = blk_mq_rq_to_pdu(req);
 
+	//zhengxd: simple map use
 	if (iod->dma_len) {
 		dma_unmap_page(dev->dev, iod->first_dma, iod->dma_len,
 			       rq_dma_dir(req));
@@ -612,9 +635,6 @@ static void nvme_unmap_data(struct nvme_dev *dev, struct request *req)
 	}
 
 	WARN_ON_ONCE(!iod->nents);
-	// if(req->bio->xrp_enabled){
-	// 	printk("----nvme_unmap: iod->page is %d, iod->use_sgl is %d----\n", iod->npages, iod->use_sgl);
-	// }
 	nvme_unmap_sg(dev, req);
 	if (iod->npages == 0)
 		dma_pool_free(dev->prp_small_pool, nvme_pci_iod_list(req)[0],
@@ -753,6 +773,7 @@ static blk_status_t nvme_pci_setup_prps_xrp(struct nvme_dev *dev,
 
 	pool = dev->prp_page_pool;
 	iod->npages = 1;
+	//zhengxd: prp_list: virtual addr; prp_dma: dma address
 	prp_list = dma_pool_alloc(pool, GFP_ATOMIC, &prp_dma);
 	if (!prp_list) {
 		errors = 2;
@@ -763,6 +784,7 @@ static blk_status_t nvme_pci_setup_prps_xrp(struct nvme_dev *dev,
 
 	// init start prp
 	cmnd->dptr.prp1 = cpu_to_le64(sg_dma_address(iod->sg));
+	// zhengxd: fixme, prp2 dont use in driver
 	cmnd->dptr.prp2 = cpu_to_le64(iod->first_dma);
 
 	sg = sg_next(sg);
@@ -938,7 +960,7 @@ static blk_status_t nvme_map_data(struct nvme_dev *dev, struct request *req,
 		struct bio_vec bv = req_bvec(req);
 		if (!is_pci_p2pdma_page(bv.bv_page)) {
 			//zhengxd: x2rp use prp map
-			if (req->bio->xrp_enabled) {
+			if (req->bio->hit_enabled) {
 				// printk("----nvme_map_data: bv_len is: %d----\n",bv.bv_len);
 				return nvme_setup_prp_simple(dev, req,
 							     &cmnd->rw, &bv);
@@ -973,7 +995,7 @@ static blk_status_t nvme_map_data(struct nvme_dev *dev, struct request *req,
 		goto out_free_sg;
 
 	iod->use_sgl = nvme_pci_use_sgls(dev, req);
-	if(req->bio->xrp_enabled){
+	if(req->bio->hit_enabled){
 		ret = nvme_pci_setup_prps_xrp(dev, req, &cmnd->rw);
 	} else if (iod->use_sgl) {
 		ret = nvme_pci_setup_sgls(dev, req, &cmnd->rw, nr_mapped);
@@ -1004,6 +1026,69 @@ static blk_status_t nvme_map_metadata(struct nvme_dev *dev, struct request *req,
 	return BLK_STS_OK;
 }
 
+extern atomic_long_t driver_time;
+extern atomic_long_t driver_count;
+extern atomic_long_t dma_time;
+extern atomic_long_t dma_count;
+extern atomic_long_t sq_time;
+extern atomic_long_t sq_count;
+
+
+
+// static void nvme_submit_work(struct work_struct *work){
+static void nvme_submit_cmd_work(struct request *req, struct nvme_command *cnmdp, struct nvme_queue *nvmeq){
+
+	struct hitchhike_kern *context = (struct hitchhike_kern *)req->bio->xrp_scratch_offset;
+	if (!context->in_use || context->done) {
+		/* nromal io */
+		req->hit_max = 1;
+		req->hit = req->hit_max;
+		return;
+	}
+	//zhengxd: main req = 1; context->max need < 31
+	req->hit_max = (1ULL << (context->max + 2)) - 1;
+	// printk("----nvme_submit_work: hit max is %lld, max is %lld\n",req->hit_max, context->max);
+	loff_t data_len;
+	u64 disk_offset;
+
+	/* address mapping */
+	// lba in 512B
+	for(;context->iter <= context->max;) {
+
+		//alloc cmd & init
+		req->hit_command[context->iter] = kmalloc(sizeof(struct nvme_command), GFP_NOWAIT);
+		memcpy(req->hit_command[context->iter],cnmdp, sizeof(struct nvme_command));
+		
+		//zhengxd: lba in 512B, datalen in bytes
+		disk_offset = context->lba[context->iter];
+		data_len = context->size[context->iter];
+		//zhengxd: slba (512B)
+		req->hit_command[context->iter]->rw.slba = cpu_to_le64(nvme_sect_to_lba(req->q->queuedata, disk_offset));
+		req->hit_command[context->iter]->rw.length = cpu_to_le16((data_len >> 9) - 1);
+		
+		//zhengxd: length(7 sector), addr(bytes)
+		void **list = nvme_pci_iod_list(req);
+		__le64 *prp_list = list[0];
+		if(data_len == 4096){
+				req->hit_command[context->iter]->rw.dptr.prp1 = prp_list[context->iter];
+		}else{
+			printk("----nvme_submit_work: length dismatch error\n");
+			return;
+		} 
+
+		//command id
+		req->hit_command[context->iter]->rw.command_id += (context->iter + 1) << 10; 
+		// printk("----nvme_submit_work: hit id is %d, command id is %d\n",(req->hit_command[context->iter]->rw.command_id >> 10),
+		// 														(req->hit_command[context->iter]->rw.command_id & 0x3ff));
+
+		nvme_submit_cmd(nvmeq, req->hit_command[context->iter], false);
+
+		context->iter++;
+		if(context->iter > context->max)
+			context->done = 1;
+		
+	}
+}
 /*
  * NOTE: ns is NULL when called on the admin queue.
  */
@@ -1011,6 +1096,10 @@ static blk_status_t nvme_map_metadata(struct nvme_dev *dev, struct request *req,
 static blk_status_t nvme_queue_rq(struct blk_mq_hw_ctx *hctx,
 			 const struct blk_mq_queue_data *bd)
 {
+	// zhengxd: kernel stat
+	// ktime_t driver_start = ktime_get();
+	bool stat = false;
+
 	struct nvme_ns *ns = hctx->queue->queuedata;
 	struct nvme_queue *nvmeq = hctx->driver_data;
 	struct nvme_dev *dev = nvmeq->dev;
@@ -1019,7 +1108,8 @@ static blk_status_t nvme_queue_rq(struct blk_mq_hw_ctx *hctx,
 	struct nvme_command cmnd, *cmndp;
 	blk_status_t ret;
 
-	if (req->bio && req->bio->xrp_enabled) {
+	if (req->bio && req->bio->hit_enabled) {
+		stat = true;
 		cmndp = kmalloc(sizeof(struct nvme_command), GFP_NOWAIT);
 		if (!cmndp) {
 			printk("nvme_queue_rq: failed to allocate struct nvme_command\n");
@@ -1045,30 +1135,60 @@ static blk_status_t nvme_queue_rq(struct blk_mq_hw_ctx *hctx,
 		return BLK_STS_IOERR;
 	
 	//zhengxd: setup qid(req->bio is neccssary)
-	if(req->bio && req->bio->xrp_enabled){
+	// if(req->bio && req->bio->hit_enabled){
 		// cpu0 -> hctx0 -> nvmeq1: struct nvme_queue *nvmeq = &dev->queues[hctx_idx + 1];
-		req->bio->qid += ((nvmeq->qid) << 10);
-	} 
-	
-	//zhengxd: init slba、length 
+		// req->bio->qid = ((nvmeq->qid) << 10);
+		// req->bio->qid = 0; 
+	// } 
+
+	//zhengxd: init slba、length, tag and command id(need < 1024)
 	ret = nvme_setup_cmd(ns, req, cmndp);
 	if (ret)
 		return ret;
 
 	// zhengxd: use sgl map
+	// zhengxd: kernel stat
+	// ktime_t dma_start = ktime_get();
+
 	if (blk_rq_nr_phys_segments(req)) {
 		ret = nvme_map_data(dev, req, cmndp);
 		if (ret)
 			goto out_free_cmd;
 	}
+	// zhengxd: kernel stat
+	// if(stat){
+		// atomic_long_inc(&dma_count);
+		// atomic_long_add(ktime_sub(ktime_get(), dma_start), &dma_time);
+	// }
+
 	if (blk_integrity_rq(req)) {
 		ret = nvme_map_metadata(dev, req, cmndp);
 		if (ret)
 			goto out_unmap_data;
 	}
+	if(req->bio && req->bio->hit_enabled){
+		nvme_submit_cmd_work(req,cmndp,nvmeq);
+	}
 	blk_mq_start_request(req);
 
-	nvme_submit_cmd(nvmeq, cmndp, bd->last);
+	// zhengxd: kernel stat
+	// ktime_t sq_start = ktime_get();
+	if(req->bio && req->bio->hit_enabled){
+		nvme_submit_cmd(nvmeq, cmndp, true);
+	} else {
+		nvme_submit_cmd(nvmeq, cmndp, bd->last);
+	}
+	// zhengxd: kernel stat
+	// if(stat){
+	// atomic_long_inc(&sq_count);
+	// atomic_long_add(ktime_sub(ktime_get(), sq_start), &sq_time);
+	// }
+	
+	// zhengxd: kernel stat
+	// if(stat){
+	// atomic_long_inc(&driver_count);
+	// atomic_long_add(ktime_sub(ktime_get(), driver_start), &driver_time);
+	// }
 	return BLK_STS_OK;
 out_unmap_data:
 	nvme_unmap_data(dev, req);
@@ -1077,6 +1197,8 @@ out_free_cmd:
 	return ret;
 }
 
+extern atomic_long_t interrupt_time;
+extern atomic_long_t interrupt_count;
 
 struct nvme_work {
     struct work_struct work;
@@ -1124,98 +1246,97 @@ static inline struct blk_mq_tags *nvme_queue_tagset(struct nvme_queue *nvmeq)
 	return nvmeq->dev->tagset.tags[nvmeq->qid - 1];
 }
 
-static void nvme_submit_work(struct work_struct *work){
+// // static void nvme_submit_work(struct work_struct *work){
+// static void nvme_submit_work(struct nvme_work *work){
 
-	struct nvme_work *nvme_work = container_of(work, struct nvme_work, work);
-	struct nvme_queue *nvmeq = nvme_work->nvmeq;
-	struct request *req =  nvme_work->req;
-	struct nvme_completion *cqe = nvme_work->cqe;
+// 	// struct nvme_work *nvme_work = container_of(work, struct nvme_work, work);
+// 	struct nvme_work *nvme_work = work;
+// 	struct nvme_queue *nvmeq = nvme_work->nvmeq;
+// 	struct request *req =  nvme_work->req;
+// 	struct nvme_completion *cqe = nvme_work->cqe;
 
 
-	struct magazine_kern *ebpf_context = (struct magazine_kern *)req->bio->xrp_scratch_offset;
-	if (!ebpf_context->in_use || ebpf_context->done) {
-		/* finish traversal */
-		// printk("----finish traversal: in_use is %d, done is %d, iter is %d", 
-		// 								ebpf_context->in_use, ebpf_context->done,ebpf_context->iter );
-		if (!nvme_try_complete_req(req, cqe->status, cqe->result))
-			nvme_pci_complete_rq(req);
-		return;
-	}
-	loff_t data_len;
-	u64 disk_offset;
+// 	struct hitchhike_kern *context = (struct hitchhike_kern *)req->bio->xrp_scratch_offset;
+// 	if (!context->in_use || context->done) {
+// 		/* finish traversal */
+// 		// printk("----finish traversal: in_use is %d, done is %d, iter is %d", 
+// 		// 								context->in_use, context->done,context->iter );
+// 		if (!nvme_try_complete_req(req, cqe->status, cqe->result))
+// 			nvme_pci_complete_rq(req);
+// 		return;
+// 	}
+// 	loff_t data_len;
+// 	u64 disk_offset;
 
-	/* address mapping */
-	// lba in 512B
-	disk_offset = ebpf_context->lba[ebpf_context->iter];
-	data_len = ebpf_context->size[ebpf_context->iter];
+// 	/* address mapping */
+// 	// lba in 512B
+// 	disk_offset = context->lba[context->iter];
+// 	data_len = context->size[context->iter];
 	
-	nvme_req(req)->cmd = req->xrp_command;
-	req->bio->xrp_count += 1;
-	req->bio->bi_iter.bi_sector = disk_offset + req->bio->xrp_partition_start_sector;
-	req->__sector = req->bio->bi_iter.bi_sector;
+// 	nvme_req(req)->cmd = req->xrp_command;
+// 	req->bio->xrp_count += 1;
+// 	req->bio->bi_iter.bi_sector = disk_offset + req->bio->xrp_partition_start_sector;
+// 	req->__sector = req->bio->bi_iter.bi_sector;
 	
-	//zhengxd: slba (512B)
-	req->xrp_command->rw.slba = cpu_to_le64(nvme_sect_to_lba(req->q->queuedata, blk_rq_pos(req)));
-	req->xrp_command->rw.length = cpu_to_le16((data_len >> 9) - 1);
+// 	//zhengxd: slba (512B)
+// 	req->xrp_command->rw.slba = cpu_to_le64(nvme_sect_to_lba(req->q->queuedata, blk_rq_pos(req)));
+// 	req->xrp_command->rw.length = cpu_to_le16((data_len >> 9) - 1);
 	
-	//zhengxd: length(7 sector), addr(bytes)
-	void **list = nvme_pci_iod_list(req);
-	__le64 *prp_list = list[0];
-	uint32_t length = (req->xrp_command->rw.length + 1) << 9;
-	if(length == 4096){
-			req->xrp_command->rw.dptr.prp1 = prp_list[ebpf_context->iter];
-	}else{
-		printk("----nvme_submit_work: length dismatch error\n");
-		ebpf_dump_page((uint8_t *) ebpf_context, sizeof(struct magazine_kern));
-		if (!nvme_try_complete_req(req, cqe->status, cqe->result))
-				nvme_pci_complete_rq(req);
-		return;
-	} 
-	ebpf_context->iter++;
-	if(ebpf_context->iter > ebpf_context->max)
-		ebpf_context->done = 1;
+// 	//zhengxd: length(7 sector), addr(bytes)
+// 	void **list = nvme_pci_iod_list(req);
+// 	__le64 *prp_list = list[0];
+// 	uint32_t length = (req->xrp_command->rw.length + 1) << 9;
+// 	if(length == 4096){
+// 			req->xrp_command->rw.dptr.prp1 = prp_list[context->iter];
+// 	}else{
+// 		printk("----nvme_submit_work: length dismatch error\n");
+// 		ebpf_dump_page((uint8_t *) context, sizeof(struct hitchhike_kern));
+// 		if (!nvme_try_complete_req(req, cqe->status, cqe->result))
+// 				nvme_pci_complete_rq(req);
+// 		return;
+// 	} 
+// 	context->iter++;
+// 	if(context->iter > context->max)
+// 		context->done = 1;
 	
-	//zhengxd： update sqqueue 
-	// unsigned int cpu = __smp_processor_id();
-	unsigned int cpu = raw_smp_processor_id();
-	printk("----nvme_submit_work: cpu id is %d----\n",cpu);
-	// if(cpu != 0){
-	nvmeq = &nvme_work->nvmeq->dev->queues[cpu+1];
-		// if(cpu == 11){
-		// 	printk("----resubmit to io thread\n");
-		// }
-	// }
-	if(!nvmeq){
-		printk("----nvme_submit_work: nvmeq error\n");
-		ebpf_dump_page((uint8_t *) ebpf_context, sizeof(struct magazine_kern));
-		if (!nvme_try_complete_req(req, cqe->status, cqe->result))
-				nvme_pci_complete_rq(req);
-		return;
-	}
+// 	//zhengxd： update sqqueue 
+// 	// unsigned int cpu = __smp_processor_id();
+// 	// unsigned int cpu = raw_smp_processor_id();
+// 	// printk("----nvme_submit_work: cpu id is %d----\n",cpu);
+// 	// if(cpu != 0){
+// 	// nvmeq = &nvme_work->nvmeq->dev->queues[cpu+1];
+// 		// if(cpu == 11){
+// 		// 	printk("----resubmit to io thread\n");
+// 		// }
+// 	// }
+// 	if(!nvmeq){
+// 		printk("----nvme_submit_work: nvmeq error\n");
+// 		ebpf_dump_page((uint8_t *) context, sizeof(struct hitchhike_kern));
+// 		if (!nvme_try_complete_req(req, cqe->status, cqe->result))
+// 				nvme_pci_complete_rq(req);
+// 		return;
+// 	}
 
-	nvme_submit_cmd(nvmeq, req->xrp_command, true);
-	kfree(nvme_work);
-}
+// 	nvme_submit_cmd(nvmeq, req->xrp_command, true);
+// 	kfree(nvme_work);
+
+// }
 
 
 //zhengxd: process cqe, and submit another sqe;
 static inline void nvme_handle_cqe(struct nvme_queue *nvmeq, u16 idx)
 {
+	// zhengxd: kernel stat
+	// ktime_t interrupt_start = ktime_get();
 	struct nvme_completion *cqe = &nvmeq->cqes[idx];
 	__u16 command_id = READ_ONCE(cqe->command_id);
 	struct request *req;
 
 	//zhegnxd: command id < 1024
-	struct nvme_queue *nvmeq_m = nvmeq;
-	u16 qid_m = command_id >> 10;
-	if(qid_m != 0){
-		nvmeq_m = &(nvmeq->dev->queues[qid_m]);
-		// printk("----nvme qid is %d----\n",qid_m);
-	}
+	u16 hit_id = command_id >> 10;
 	if(io_queue_depth <= 1024){
 		command_id &= 0x3ff;
 	}
-	
 	
 	/*
 	 * AEN requests are special as they don't time out and can
@@ -1223,42 +1344,60 @@ static inline void nvme_handle_cqe(struct nvme_queue *nvmeq, u16 idx)
 	 * aborts.  We don't even bother to allocate a struct request
 	 * for them but rather special case them here.
 	 */
-	if (unlikely(nvme_is_aen_req(nvmeq_m->qid, command_id))) {
-		nvme_complete_async_event(&nvmeq_m->dev->ctrl,
+	if (unlikely(nvme_is_aen_req(nvmeq->qid, command_id))) {
+		nvme_complete_async_event(&nvmeq->dev->ctrl,
 				cqe->status, &cqe->result);
 		return;
 	}
 
-	req = blk_mq_tag_to_rq(nvme_queue_tagset(nvmeq_m), command_id);
+	req = blk_mq_tag_to_rq(nvme_queue_tagset(nvmeq), command_id);
 	if (unlikely(!req)) {
-		dev_warn(nvmeq_m->dev->ctrl.device,
+		dev_warn(nvmeq->dev->ctrl.device,
 			"invalid id %d completed on queue %d\n",
 			command_id, le16_to_cpu(cqe->sq_id));
 		return;
 	}
 
-	trace_nvme_sq(req, cqe->sq_head, nvmeq_m->sq_tail);
+	trace_nvme_sq(req, cqe->sq_head, nvmeq->sq_tail);
 
-	if (!req->bio || !req->bio->xrp_enabled) {
+	//hit id (1 ~ 31)
+	bool finish = false;
+	if(req->bio && req->bio->hit_enabled){
+		// printk("----irq: hit id is %d----",hit_id);
+		req->hit |= (1ULL << hit_id);
+		// printk("----irq: hit is %d----",req->hit);
+	}
+	if(req->hit == req->hit_max)
+		finish = true;
+
+	if (!req->bio || !req->bio->hit_enabled || finish) {
 		/* normal completion path */
 		if (!nvme_try_complete_req(req, cqe->status, cqe->result))
 			nvme_pci_complete_rq(req);
-	} else {
-		struct nvme_work *work;
-		work = kmalloc(sizeof(*work), GFP_ATOMIC);
-		if (!work)
-        	return;
-		work->nvmeq = nvmeq;
-		work->cqe = cqe;
+	} 
+	// else {
+		// ----interrupt submuit----
+		// struct nvme_work *work;
+		// work = kmalloc(sizeof(*work), GFP_ATOMIC);
+		// if (!work)
+        	// return;
+		// work->nvmeq = nvmeq;
+		// work->cqe = cqe;
 		// work->idx = idx;
-		work->req = req;
+		// work->req = req;
+		// nvme_submit_work(work);
 		// work->write_sq = true;
-		INIT_WORK(&work->work, nvme_submit_work);
+		// INIT_WORK(&work->work, nvme_submit_work);
 		// zhengxd: work on a fixed cpu
 		// queue_work_on(13,nvme_resubmit_wq, &work->work);
 		// zhengxd: work on a random cpu
-		queue_work(nvme_resubmit_wq, &work->work);
-	}
+		// queue_work(nvme_resubmit_wq, &work->work);
+		
+		// zhengxd: kernel stat
+		// atomic_long_inc(&interrupt_count);
+		// // printk("----hit: interrupt io time is %lld----\n",ktime_sub(ktime_get(), interrupt_start));
+		// atomic_long_add(ktime_sub(ktime_get(), interrupt_start), &interrupt_time);
+	// }
 }
 
 static inline void nvme_update_cq_head(struct nvme_queue *nvmeq)

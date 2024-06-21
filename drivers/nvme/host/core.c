@@ -944,11 +944,7 @@ blk_status_t nvme_setup_cmd(struct nvme_ns *ns, struct request *req,
 		return BLK_STS_IOERR;
 	}
 
-	if(req->bio && req->bio->xrp_enabled){
-		cmd->common.command_id += (req->bio->qid + req->tag);
-	} else {
-		cmd->common.command_id = req->tag;
-	}
+	cmd->common.command_id = req->tag;
 	
 	trace_nvme_setup_cmd(req, cmd);
 	return ret;

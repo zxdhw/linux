@@ -1453,7 +1453,7 @@ static int aio_prep_rw(struct kiocb *req, const struct iocb *iocb)
 	req->private = NULL;
 	req->ki_pos = iocb->aio_offset;
 	//zhengxd: new: data_len(aio_reserved2) init
-	if(req->xrp_enabled){
+	if(req->hit_enabled){
 		req->data_len = iocb->aio_dsize;
 	}
 	req->ki_flags = iocb_flags(req->ki_filp);
@@ -1904,7 +1904,8 @@ static int io_submit_one(struct kioctx *ctx, struct iocb __user *user_iocb,
 	}
 	return err;
 }
-
+extern atomic_long_t aio_time;
+extern atomic_long_t aio_count;
 /* sys_io_submit:
  *	Queue the nr iocbs pointed to by iocbpp for processing.  Returns
  *	the number of iocbs queued.  May return -EINVAL if the aio_context
@@ -1920,6 +1921,8 @@ static int io_submit_one(struct kioctx *ctx, struct iocb __user *user_iocb,
 SYSCALL_DEFINE3(io_submit, aio_context_t, ctx_id, long, nr,
 		struct iocb __user * __user *, iocbpp)
 {
+	// zhengxd: kernel stat
+	// ktime_t aio_start = ktime_get();
 	struct kioctx *ctx;
 	long ret = 0;
 	int i = 0;
@@ -1948,30 +1951,42 @@ SYSCALL_DEFINE3(io_submit, aio_context_t, ctx_id, long, nr,
 		}
 
 		ret = io_submit_one(ctx, user_iocb, false);
+		// zhengxd: kernel stat
+		// atomic_long_inc(&aio_count);
 		if (ret)
 			break;
 	}
 	if (nr > AIO_PLUG_THRESHOLD)
 		blk_finish_plug(&plug);
+	
+	// zhengxd: kernel stat
+	// atomic_long_add(ktime_sub(ktime_get(), aio_start), &aio_time);
 
 	percpu_ref_put(&ctx->users);
 	return i ? i : ret;
 }
-/*zhengxd: aio_read_xrp
+
+extern atomic_long_t aio_hit_time;
+extern atomic_long_t aio_hit_count;
+
+extern atomic_long_t read_iter_time;
+extern atomic_long_t read_iter_count;
+
+/*zhengxd: aio_read_hit
 *  @bpf_fd: bpf function index
 *  @scratch_buf: parasitic request array
 */
-static int aio_read_xrp(struct kiocb *req, const struct iocb *iocb,
+static int aio_read_hit(struct kiocb *req, const struct iocb *iocb,
 			bool vectored, bool compat, unsigned int bpf_fd, char __user *scratch_buf)
 {
 	struct iovec inline_vecs[UIO_FASTIOV], *iovec = inline_vecs;
 	struct iov_iter iter;
 	struct file *file;
 	int ret;
-	// zhengxd: kiocb init with xrp info
-	req->xrp_scratch_buf = scratch_buf;
+	// zhengxd: kiocb init with hit info
+	req->hit_scratch_buf = scratch_buf;
 	req->xrp_bpf_fd = bpf_fd;
-	req->xrp_enabled = true;
+	req->hit_enabled = true;
 	// zhengxd: new: kiocb init data_len
 	ret = aio_prep_rw(req, iocb);
 	if (ret)
@@ -1989,16 +2004,22 @@ static int aio_read_xrp(struct kiocb *req, const struct iocb *iocb,
 	//zhengxd: new: data_len; old: iov_iter_count(&iter);
 	//zhengxd: fixme: add hitchhike check
 	ret = rw_verify_area(READ, file, &req->ki_pos, req->data_len);
+	// zhengxd: kernel stat
+	// ktime_t read_iter_start = ktime_get();
 	if (!ret)
 		aio_rw_done(req, call_read_iter(file, req, &iter));
+	// zhengxd: kernel stat
+	// atomic_long_inc(&read_iter_count);
+	// atomic_long_add(ktime_sub(ktime_get(), read_iter_start), &read_iter_time);
+
 	kfree(iovec);
 	return ret;
 }
-/* zhengxd: __io_submit_xrp_one
+/* zhengxd: __io_submit_hit_one
 *  @bpf_fd: bpf function index
 *  @scratch_buf: parasitic request array
 */
-static int __io_submit_xrp_one(struct kioctx *ctx, const struct iocb *iocb,
+static int __io_submit_hit_one(struct kioctx *ctx, const struct iocb *iocb,
 			   struct iocb __user *user_iocb, struct aio_kiocb *req,
 			   bool compat, unsigned int bpf_fd, char __user *scratch_buf)
 {
@@ -2034,7 +2055,7 @@ static int __io_submit_xrp_one(struct kioctx *ctx, const struct iocb *iocb,
 
 	switch (iocb->aio_lio_opcode) {
 	case IOCB_CMD_PREAD:
-		return aio_read_xrp(&req->rw, iocb, false, compat, bpf_fd, scratch_buf);
+		return aio_read_hit(&req->rw, iocb, false, compat, bpf_fd, scratch_buf);
 	case IOCB_CMD_PWRITE:
 		return aio_write(&req->rw, iocb, false, compat);
 	case IOCB_CMD_PREADV:
@@ -2053,11 +2074,11 @@ static int __io_submit_xrp_one(struct kioctx *ctx, const struct iocb *iocb,
 	}
 }
 
-/* zhengxd: io_submit_xrp_one
+/* zhengxd: io_submit_hit_one
 *  @bpf_fd: bpf function index
 *  @scratch_buf: parasitic request array
 */
-static int io_submit_xrp_one(struct kioctx *ctx, struct iocb __user *user_iocb,
+static int io_submit_hit_one(struct kioctx *ctx, struct iocb __user *user_iocb,
 			 bool compat, unsigned int bpf_fd, char __user * scratch_buf)
 {
 	struct aio_kiocb *req;
@@ -2089,7 +2110,7 @@ static int io_submit_xrp_one(struct kioctx *ctx, struct iocb __user *user_iocb,
 	if (unlikely(!req))
 		return -EAGAIN;
 
-	err = __io_submit_xrp_one(ctx, &iocb, user_iocb, req, compat, bpf_fd, scratch_buf);
+	err = __io_submit_hit_one(ctx, &iocb, user_iocb, req, compat, bpf_fd, scratch_buf);
 
 	/* Done with the synchronous reference */
 	iocb_put(req);
@@ -2121,14 +2142,16 @@ static int io_submit_xrp_one(struct kioctx *ctx, struct iocb __user *user_iocb,
  *  @bpf_fd: bpf prog 
  *  @scratch_bufs: every io has a scratch_buf 
  */
-// zhengxd: aio_xrp entry
-SYSCALL_DEFINE5(io_submit_xrp, aio_context_t, ctx_id, long, nr, struct iocb __user * __user *, iocbpp,
+// zhengxd: aio_hit entry
+SYSCALL_DEFINE5(io_submit_hit, aio_context_t, ctx_id, long, nr, struct iocb __user * __user *, iocbpp,
 					unsigned int, bpf_fd, char __user * __user *, scratch_bufs)
 {
+	// zhengxd: kernel stat
+	// ktime_t aio_hit_start = ktime_get();
 	struct kioctx *ctx;
 	long ret = 0;
 	int i = 0;
-	//zhengxd: disbale plug
+	//zhengxd: fixme: hit disbale plug, when start aio plug, iomap maybe error.
 	// struct blk_plug plug;
 
 	if (unlikely(nr < 0))
@@ -2159,13 +2182,17 @@ SYSCALL_DEFINE5(io_submit_xrp, aio_context_t, ctx_id, long, nr, struct iocb __us
 			break;
 		}
 		// zhengxd: submit io one by one 
-		ret = io_submit_xrp_one(ctx, user_iocb, false, bpf_fd, scratch_buf);
+		ret = io_submit_hit_one(ctx, user_iocb, false, bpf_fd, scratch_buf);
 		if (ret)
 			break;
+		// zhengxd: kernel stat
+		// atomic_long_inc(&aio_hit_count);
 	}
-	// zhengxd: new: in x2rp V1.0, we disable plug
+	// zhengxd: we disable plug
 	// if (nr > AIO_PLUG_THRESHOLD)
 		// blk_finish_plug(&plug);
+	// zhengxd: kernel stat
+	// atomic_long_add(ktime_sub(ktime_get(), aio_hit_start), &aio_hit_time);
 
 	percpu_ref_put(&ctx->users);
 	return i ? i : ret;

@@ -563,6 +563,15 @@ static inline bool nvme_try_complete_req(struct request *req, __le16 status,
 		kfree(req->xrp_command);
 		req->xrp_command = NULL;
 	}
+	if(req->hit){
+		int iter;
+		for(iter = 0;req->hit != 0;iter++){
+			// printk("----complete req: iter is %d", iter);
+			kfree(req->hit_command[iter]);
+			req->hit_command[iter] = NULL;
+			req->hit = req->hit >> 1;
+		}
+	}
 
 	rq->status = le16_to_cpu(status) >> 1;
 	rq->result = result;

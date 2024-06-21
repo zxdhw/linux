@@ -872,7 +872,7 @@ bool __bio_try_merge_page(struct bio *bio, struct page *page,
 				return false;
 			}
 			bv->bv_len += len;
-			if(!bio->xrp_enabled) bio->bi_iter.bi_size += len;
+			if(!bio->hit_enabled) bio->bi_iter.bi_size += len;
 			return true;
 		}
 	}
@@ -903,10 +903,10 @@ void __bio_add_page(struct bio *bio, struct page *page,
 	bv->bv_len = len;
 
 	//zhengxd: bi_size init with dataszie instead of buffer len
-	if(!bio->xrp_enabled) bio->bi_iter.bi_size += len;
+	if(!bio->hit_enabled) bio->bi_iter.bi_size += len;
 	bio->bi_vcnt++;
 
-	// if(bio->xrp_enabled){
+	// if(bio->hit_enabled){
 	// 	printk("----iomap: vcnt is %d, bv_len is %d, bv offset is %d-----\n", bio->bi_vcnt,bv->bv_len,bv->bv_offset);
 	// }
 
@@ -947,7 +947,7 @@ void bio_release_pages(struct bio *bio, bool mark_dirty)
 	if (bio_flagged(bio, BIO_NO_PAGE_REF))
 		return;
 
-	if(bio->xrp_enabled){
+	if(bio->hit_enabled){
 		unsigned int idx; 
 		for (idx = 0; idx < bio->bi_vcnt;idx++){
 			bvec = &bio->bi_io_vec[idx];
@@ -1030,7 +1030,7 @@ static int __bio_iov_iter_get_pages(struct bio *bio, struct iov_iter *iter)
 	pages += entries_left * (PAGE_PTRS_PER_BVEC - 1);
 
 	size = iov_iter_get_pages(iter, pages, LONG_MAX, nr_pages, &offset);
-	// if(bio->xrp_enabled){
+	// if(bio->hit_enabled){
 	// 	printk("----iomap pages: all bv size is %ld-----\n", size);
 	// }
 	if (unlikely(size <= 0))
@@ -1041,14 +1041,14 @@ static int __bio_iov_iter_get_pages(struct bio *bio, struct iov_iter *iter)
 
 		len = min_t(size_t, PAGE_SIZE - offset, left);
 		// zhengxd: Consecutive physical pages(not page address)
-		if(bio->xrp_enabled){
+		if(bio->hit_enabled){
 			if (WARN_ON_ONCE(bio_full(bio, len)))
                 return -EINVAL;
 			//zhengxd: modify bio->bi_iter.bi_size
 			__bio_add_page(bio, page, len, offset);
 			
 		} else if (__bio_try_merge_page(bio, page, len, offset, &same_page)) {
-			// if(bio->xrp_enabled){
+			// if(bio->hit_enabled){
 			// 	printk(KERN_DEBUG "----iomap merge: try merge-----\n");
 			// }
 			if (same_page)

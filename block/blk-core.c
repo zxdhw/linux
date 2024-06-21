@@ -749,7 +749,7 @@ static int blk_partition_remap(struct bio *bio)
 		return -EIO;
 	if (bio_sectors(bio)) {
 		bio->bi_iter.bi_sector += p->bd_start_sect;
-		if (bio->xrp_enabled)
+		if (bio->hit_enabled)
 			bio->xrp_partition_start_sector = p->bd_start_sect;
 		trace_block_bio_remap(bio, p->bd_dev,
 				      bio->bi_iter.bi_sector -
@@ -994,8 +994,13 @@ static blk_qc_t __submit_bio_noacct(struct bio *bio)
 	return ret;
 }
 
+extern atomic_long_t block_time;
+extern atomic_long_t block_count;
+
 static blk_qc_t __submit_bio_noacct_mq(struct bio *bio)
 {
+	// zhengxd: kernel stat
+	// ktime_t block_start = ktime_get();
 	struct bio_list bio_list[2] = { };
 	blk_qc_t ret = BLK_QC_T_NONE;
 
@@ -1014,6 +1019,13 @@ static blk_qc_t __submit_bio_noacct_mq(struct bio *bio)
 		}
 		ret = blk_mq_submit_bio(bio);
 	} while ((bio = bio_list_pop(&bio_list[0])));
+
+	// zhengxd: kernel stat
+	// if(bio->hit_enabled){
+		// atomic_long_inc(&block_count);
+	// 	printk("----fs io time is %lld----\n",ktime_sub(ktime_get(), fs_start));
+		// atomic_long_add(ktime_sub(ktime_get(), block_start), &block_time);
+	// }
 
 	current->bio_list = NULL;
 	return ret;

@@ -1962,6 +1962,10 @@ static void blk_mq_bio_to_request(struct request *rq, struct bio *bio,
 
 	blk_account_io_start(rq);
 }
+//zhengxd: end block layer
+extern atomic_long_t block_time;
+extern atomic_long_t block_count;
+extern ktime_t block_start;
 
 static blk_status_t __blk_mq_issue_directly(struct blk_mq_hw_ctx *hctx,
 					    struct request *rq,
@@ -1983,7 +1987,20 @@ static blk_status_t __blk_mq_issue_directly(struct blk_mq_hw_ctx *hctx,
 	 * previously would have done.
 	 */
 	//zhengxd: block layer end
+	// zhengxd: kernel stat
+	// struct request *req = bd.rq;
+	// bool print =false;
+	// if(req->bio->hit_enabled){
+	// 	print = true;
+	// }
 	ret = q->mq_ops->queue_rq(hctx, &bd);
+	// zhengxd: kernel stat
+	// if(print){
+	// 	atomic_long_inc(&block_count);
+	// 	printk("----block io time is %lld----\n",ktime_sub(ktime_get(), block_start));
+	// 	atomic_long_add(ktime_sub(ktime_get(), block_start), &block_time);
+	// }
+
 	switch (ret) {
 	case BLK_STS_OK:
 		blk_mq_update_dispatch_busy(hctx, false);
@@ -2139,6 +2156,8 @@ static void blk_add_rq_to_plug(struct blk_plug *plug, struct request *rq)
 	}
 }
 
+extern atomic_long_t req_time;
+extern atomic_long_t req_count;
 /**
  * blk_mq_submit_bio - Create and send a request to block device.
  * @bio: Bio pointer.
@@ -2157,6 +2176,8 @@ static void blk_add_rq_to_plug(struct blk_plug *plug, struct request *rq)
 //zhengxd: mq entry
 blk_qc_t blk_mq_submit_bio(struct bio *bio)
 {
+	//zhengxd: kernel stat
+	// ktime_t req_start = ktime_get();
 	struct request_queue *q = bio->bi_bdev->bd_disk->queue;
 	const int is_sync = op_is_sync(bio->bi_opf);
 	const int is_flush_fua = op_is_flush(bio->bi_opf);
@@ -2211,6 +2232,11 @@ blk_qc_t blk_mq_submit_bio(struct bio *bio)
 		blk_mq_free_request(rq);
 		return BLK_QC_T_NONE;
 	}
+	// if(bio->hit_enabled){
+		// atomic_long_inc(&req_count);
+		// printk("----page io time is %lld----\n",ktime_sub(ktime_get(), get_page_start));
+		// atomic_long_add(ktime_sub(ktime_get(), req_start), &req_time);
+	// }
 
 	plug = blk_mq_plug(q, bio);
 	if (unlikely(is_flush_fua)) {
@@ -3342,7 +3368,6 @@ static int blk_mq_update_queue_map(struct blk_mq_tag_set *set)
 
 	if (set->ops->map_queues && !is_kdump_kernel()) {
 		int i;
-
 		/*
 		 * transport .map_queues is usually done in the following
 		 * way:

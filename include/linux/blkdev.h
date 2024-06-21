@@ -235,6 +235,9 @@ struct request {
 	};
 
 	struct nvme_command *xrp_command;
+	struct nvme_command *hit_command[32];
+	u64	hit;
+	u64	hit_max;
 
 	/*
 	 * completion callback.
@@ -1055,7 +1058,7 @@ static inline struct bio_vec req_bvec(struct request *rq)
 {
 	if (rq->rq_flags & RQF_SPECIAL_PAYLOAD)
 		return rq->special_vec;
-	if(rq->bio->xrp_enabled){
+	if(rq->bio->hit_enabled){
 		return mp_bvec_iter_bvec_xrp(rq->bio->bi_io_vec, rq->bio->bi_iter);
 	}
 	return mp_bvec_iter_bvec(rq->bio->bi_io_vec, rq->bio->bi_iter);

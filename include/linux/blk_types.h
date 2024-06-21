@@ -278,7 +278,7 @@ struct bio {
 
 	struct bio_set		*bi_pool;
 
-	bool			xrp_enabled;
+	bool			hit_enabled;
 	struct inode		*xrp_inode;
 	u64			xrp_partition_start_sector;
 	int			xrp_count;

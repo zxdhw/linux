@@ -895,6 +895,212 @@ SYSCALL_DEFINE1(print_xrp_stats, struct xrp_stats __user *, buf)
 	return 0;
 }
 
+atomic_long_t aio_time;
+atomic_long_t aio_count;
+EXPORT_SYMBOL(aio_time);
+EXPORT_SYMBOL(aio_count);
+
+atomic_long_t aio_hit_time;
+atomic_long_t aio_hit_count;
+EXPORT_SYMBOL(aio_hit_time);
+EXPORT_SYMBOL(aio_hit_count);
+
+atomic_long_t read_iter_time;
+atomic_long_t read_iter_count;
+EXPORT_SYMBOL(read_iter_time);
+EXPORT_SYMBOL(read_iter_count);
+
+ktime_t fs_start;
+atomic_long_t fs_time;
+atomic_long_t fs_count;
+EXPORT_SYMBOL(fs_start);
+EXPORT_SYMBOL(fs_time);
+EXPORT_SYMBOL(fs_count);
+
+atomic_long_t block_time;
+atomic_long_t block_count;
+atomic_long_t block_start;
+EXPORT_SYMBOL(block_time);
+EXPORT_SYMBOL(block_count);
+EXPORT_SYMBOL(block_start);
+
+atomic_long_t driver_time;
+atomic_long_t driver_count;
+EXPORT_SYMBOL(driver_time);
+EXPORT_SYMBOL(driver_count);
+
+atomic_long_t iomap_time;
+atomic_long_t iomap_count;
+EXPORT_SYMBOL(iomap_time);
+EXPORT_SYMBOL(iomap_count);
+
+atomic_long_t bio_time;
+atomic_long_t bio_count;
+EXPORT_SYMBOL(bio_time);
+EXPORT_SYMBOL(bio_count);
+
+atomic_long_t req_time;
+atomic_long_t req_count;
+EXPORT_SYMBOL(req_time);
+EXPORT_SYMBOL(req_count);
+
+atomic_long_t get_page_time;
+atomic_long_t get_page_count;
+EXPORT_SYMBOL(get_page_time);
+EXPORT_SYMBOL(get_page_count);
+
+atomic_long_t dma_time;
+atomic_long_t dma_count;
+EXPORT_SYMBOL(dma_time);
+EXPORT_SYMBOL(dma_count);
+
+atomic_long_t sq_time;
+atomic_long_t sq_count;
+EXPORT_SYMBOL(sq_time);
+EXPORT_SYMBOL(sq_count);
+
+atomic_long_t sq_cpy_time;
+atomic_long_t sq_cpy_count;
+EXPORT_SYMBOL(sq_cpy_time);
+EXPORT_SYMBOL(sq_cpy_count);
+
+atomic_long_t sq_write_time;
+atomic_long_t sq_write_count;
+EXPORT_SYMBOL(sq_write_time);
+EXPORT_SYMBOL(sq_write_count);
+
+atomic_long_t lock_time;
+atomic_long_t lock_count;
+EXPORT_SYMBOL(lock_time);
+EXPORT_SYMBOL(lock_count);
+
+atomic_long_t interrupt_time;
+atomic_long_t interrupt_count;
+EXPORT_SYMBOL(interrupt_time);
+EXPORT_SYMBOL(interrupt_count);
+
+SYSCALL_DEFINE1(print_hit_stats, struct hit_stats __user *, buf)
+{
+	long _aio_time= atomic_long_xchg(&aio_time, 0);
+	long _aio_count = atomic_long_xchg(&aio_count, 0);
+	long _aio_hit_time= atomic_long_xchg(&aio_hit_time, 0);
+	long _aio_hit_count = atomic_long_xchg(&aio_hit_count, 0);
+	long _read_iter_time= atomic_long_xchg(&read_iter_time, 0);
+	long _read_iter_count = atomic_long_xchg(&read_iter_count, 0);
+	long _fs_time = atomic_long_xchg(&fs_time, 0);
+	long _fs_count = atomic_long_xchg(&fs_count, 0);
+	long _block_time = atomic_long_xchg(&block_time, 0);
+	long _block_count = atomic_long_xchg(&block_count, 0);
+	long _driver_time = atomic_long_xchg(&driver_time, 0);
+	long _driver_count = atomic_long_xchg(&driver_count, 0);
+	long _iomap_time = atomic_long_xchg(&iomap_time, 0);
+	long _iomap_count= atomic_long_xchg(&iomap_count, 0);
+	long _get_page_time= atomic_long_xchg(&get_page_time, 0);
+	long _get_page_count = atomic_long_xchg(&get_page_count, 0);
+	long _bio_time = atomic_long_xchg(&bio_time, 0);
+	long _bio_count= atomic_long_xchg(&bio_count, 0);
+	long _req_time = atomic_long_xchg(&req_time, 0);
+	long _req_count= atomic_long_xchg(&req_count, 0);
+	long _dma_time = atomic_long_xchg(&dma_time, 0);
+	long _dma_count= atomic_long_xchg(&dma_count, 0);
+	long _sq_time = atomic_long_xchg(&sq_time, 0);
+	long _sq_count= atomic_long_xchg(&sq_count, 0);
+	long _sq_cpy_time = atomic_long_xchg(&sq_cpy_time, 0);
+	long _sq_cpy_count= atomic_long_xchg(&sq_cpy_count, 0);
+	long _sq_write_time = atomic_long_xchg(&sq_write_time, 0);
+	long _sq_write_count= atomic_long_xchg(&sq_write_count, 0);
+	long _lock_time = atomic_long_xchg(&lock_time, 0);
+	long _lock_count= atomic_long_xchg(&lock_count, 0);
+	long _interrupt_time = atomic_long_xchg(&interrupt_time, 0);
+	long _interrupt_count= atomic_long_xchg(&interrupt_count, 0);
+
+	struct hit_stats stats = {
+		_aio_time,
+		_aio_count,
+
+		_aio_hit_time,
+		_aio_hit_count,
+
+		_read_iter_time,
+		_read_iter_count,
+
+		_fs_time,
+		_fs_count,
+
+		_block_time,
+		_block_count,
+
+		_driver_time,
+		_driver_count,
+
+		_iomap_time,
+		_iomap_count,
+
+		_get_page_time,
+		_get_page_count,
+
+		_bio_time,
+		_bio_count,
+		
+		_req_time,
+		_req_count,
+
+		_dma_time,
+		_dma_count,
+
+		_sq_time,
+		_sq_count,
+
+		_sq_cpy_time,
+		_sq_cpy_count,
+
+		_sq_write_time,
+		_sq_write_count,
+
+		_lock_time,
+		_lock_count,
+
+		_interrupt_time,
+		_interrupt_count,
+	};
+
+	// printk("aio time: %ld\n", _aio_time);
+	// printk("aio count: %ld\n", _aio_count);
+	// printk("aio hit time: %ld\n", _aio_hit_time);
+	// printk("aio hit count: %ld\n", _aio_hit_count);
+	// printk("read iter time: %ld\n", _read_iter_time);
+	// printk("read iter count: %ld\n", _read_iter_count);
+	// printk("fs time: %ld\n", _fs_time);
+	// printk("fs count: %ld\n", _fs_count);
+	// printk("block time: %ld\n", _block_time);
+	// printk("block count: %ld\n", _block_count);
+	// printk("driver time: %ld\n", _driver_time);
+	// printk("dirver count: %ld\n",_driver_count);
+	// printk("iomap time: %ld\n",_iomap_time);
+	// printk("iomap count: %ld\n", _iomap_count);
+	// printk("page time: %ld\n",_get_page_time);
+	// printk("page count: %ld\n", _get_page_count);
+	// printk("bio time: %ld\n",_bio_time);
+	// printk("bio count: %ld\n", _bio_count);
+	// printk("req time: %ld\n",_req_time);
+	// printk("req count: %ld\n", _req_count);
+	// printk("dma time: %ld\n",_dma_time);
+	// printk("dma count: %ld\n", _dma_count);
+	// printk("sq time: %ld\n",_sq_time);
+	// printk("sq count: %ld\n", _sq_count);
+	// printk("sq cpy time: %ld\n",_sq_cpy_time);
+	// printk("sq cpy count: %ld\n", _sq_cpy_count);
+	// printk("sq write time: %ld\n",_sq_write_time);
+	// printk("sq write count: %ld\n", _sq_write_count);
+	// printk("interrupt time: %ld\n",_interrupt_time);
+	// printk("interrupt count: %ld\n", _interrupt_count);
+
+	if (buf != NULL && copy_to_user(buf, &stats, sizeof(struct hit_stats)))
+		return -EFAULT;
+
+	return 0;
+}
+
 int xrp_bpf_prog_attach(const union bpf_attr *attr, struct bpf_prog *prog)
 {
 	return 0;

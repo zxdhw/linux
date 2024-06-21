@@ -1481,11 +1481,11 @@ struct bpf_xrp_kern {
 	char *scratch;
 };
 
-struct magazine_kern {
-	uint32_t done;
-	uint32_t iter;
-	uint32_t max;
-	uint32_t in_use;
+struct hitchhike_kern {
+	uint64_t done;
+	uint64_t iter;
+	uint64_t max;
+	uint64_t in_use;
 	uint64_t page[32];
 	uint64_t addr[32];
 	uint64_t lba[32];
@@ -1509,6 +1509,58 @@ struct xrp_stats {
 
 	long xrp_extent_lookup_time;
 	long xrp_extent_lookup_count;
+};
+
+
+struct hit_stats {
+
+	long aio_time;
+	long aio_count;
+
+	long aio_hit_time;
+	long aio_hit_count;
+
+	long read_iter_time;
+	long read_iter_count;
+
+	long fs_time;
+	long fs_count;
+
+	long block_time;
+	long block_count;
+
+	long driver_time;
+	long driver_count;
+
+	long iomap_time;
+	long iomap_count;
+
+	long get_page_time;
+	long get_page_count;
+
+	long bio_time;
+	long bio_count;
+
+	long req_time;
+	long req_count;
+
+	long dma_time;
+	long dma_count;
+
+	long sq_time;
+	long sq_count;
+
+	long sq_cpy_time;
+	long sq_cpy_count;
+
+	long sq_write_time;
+	long sq_write_count;
+
+	long lock_time;
+	long lock_count;
+
+	long interrupt_time;
+	long interrupt_count;
 };
 
 void ebpf_dump_page(uint8_t *page_image, uint64_t size);

@@ -19,6 +19,7 @@
  *	(jj@sunsite.ms.mff.cuni.cz)
  */
 
+#include "linux/ktime.h"
 #include <linux/time.h>
 #include <linux/fs.h>
 #include <linux/iomap.h>
@@ -109,9 +110,15 @@ static ssize_t ext4_dax_read_iter(struct kiocb *iocb, struct iov_iter *to)
 	return ret;
 }
 #endif
+
+extern ktime_t fs_start;
 // zhengxd: ext4 entry
 static ssize_t ext4_file_read_iter(struct kiocb *iocb, struct iov_iter *to)
 {
+	// zhengxd: kernel stat
+	// if(iocb->hit_enabled){
+		// fs_start = ktime_get();
+	// }
 	struct inode *inode = file_inode(iocb->ki_filp);
 
 	if (unlikely(ext4_forced_shutdown(EXT4_SB(inode->i_sb))))

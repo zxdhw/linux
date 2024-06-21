@@ -321,8 +321,8 @@ enum rw_hint {
 
 struct kiocb {
 	struct file		*ki_filp;
-	bool			xrp_enabled;
-	char __user		*xrp_scratch_buf;
+	bool			hit_enabled;
+	char __user		*hit_scratch_buf;
 	unsigned int		xrp_bpf_fd;
 	// zhengxd: add data len; 
 	// represents a segment of file address space with ki_pos (start: ki_pos; end: ki_pos+xrp_data_len)

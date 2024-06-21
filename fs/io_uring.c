@@ -2740,8 +2740,8 @@ static int io_prep_rw(struct io_kiocb *req, const struct io_uring_sqe *sqe)
 		kiocb->ki_complete = io_complete_rw;
 	}
 	if (sqe->opcode == IORING_OP_READ_XRP) {
-		kiocb->xrp_enabled = true;
-		kiocb->xrp_scratch_buf = (char __user *) sqe->scratch;
+		kiocb->hit_enabled = true;
+		kiocb->hit_scratch_buf = (char __user *) sqe->scratch;
 		kiocb->xrp_bpf_fd = (unsigned int) sqe->bpf_fd;
 	}
 

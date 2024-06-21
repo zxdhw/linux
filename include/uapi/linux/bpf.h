@@ -5263,11 +5263,11 @@ struct bpf_xrp {
 	char *scratch;
 };
 
-struct magazine_xrp {
-	__s32 done;
-	__s32 iter;
-	__s32 max;
-	__s32 in_use;
+struct hitchhike {
+	__s64 done;
+	__s64 iter;
+	__s64 max;
+	__s64 in_use;
 	__u64 page[32];
 	__u64 addr[32];
 	__u64 lba[32];

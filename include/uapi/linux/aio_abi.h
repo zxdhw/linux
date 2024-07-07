@@ -108,6 +108,17 @@ struct iocb {
 	__u32	aio_resfd;
 }; /* 64 bytes */
 
+struct hitchhike {
+	__s32 max;
+	__s32 in_use;
+	// __u64 page[128];
+	__u64 addr[127];
+	// __u64 lba[128];
+	// __u32 size[128];
+	// char *data;
+	// char *scratch;
+};
+
 #undef IFBIG
 #undef IFLITTLE
 

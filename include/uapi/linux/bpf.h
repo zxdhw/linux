@@ -5263,17 +5263,17 @@ struct bpf_xrp {
 	char *scratch;
 };
 
-struct hitchhike {
-	__s64 done;
-	__s64 iter;
-	__s64 max;
-	__s64 in_use;
-	__u64 page[32];
-	__u64 addr[32];
-	__u64 lba[32];
-	__u64 size[32];
-	char *data;
-	char *scratch;
-};
+// struct hitchhike {
+// 	__s64 done;
+// 	__s64 iter;
+// 	__s64 max;
+// 	__s64 in_use;
+// 	__u64 page[32];
+// 	__u64 addr[32];
+// 	__u64 lba[32];
+// 	__u64 size[32];
+// 	char *data;
+// 	char *scratch;
+// };
 
 #endif /* _UAPI__LINUX_BPF_H__ */

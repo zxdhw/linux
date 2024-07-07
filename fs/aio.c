@@ -10,6 +10,7 @@
  *	See ../COPYING for licensing terms.
  */
 #include "linux/kern_levels.h"
+#include "linux/ktime.h"
 #define pr_fmt(fmt) "%s: " fmt, __func__
 
 #include <linux/kernel.h>
@@ -231,6 +232,18 @@ static struct vfsmount *aio_mnt;
 
 static const struct file_operations aio_ring_fops;
 static const struct address_space_operations aio_ctx_aops;
+
+/*-----zhengxd kernel stat----*/
+extern atomic_long_t io_time;
+extern atomic_long_t io_count;
+extern atomic_long_t aio_time;
+extern atomic_long_t aio_count;
+extern atomic_long_t aio_hit_time;
+extern atomic_long_t aio_hit_count;
+extern atomic_long_t read_iter_time;
+extern atomic_long_t read_iter_count;
+ktime_t io_start;
+/*-----zhengxd kernel stat----*/
 
 static struct file *aio_private_file(struct kioctx *ctx, loff_t nr_pages)
 {
@@ -1423,6 +1436,13 @@ static void aio_remove_iocb(struct aio_kiocb *iocb)
 
 static void aio_complete_rw(struct kiocb *kiocb, long res, long res2)
 {
+	//zhengxd: free kiocb;
+	// kfree(kiocb->hit);
+	if(kiocb->hit_enabled){
+		// kfree(kiocb->hit);
+		kiocb->hit = NULL;
+	}
+
 	struct aio_kiocb *iocb = container_of(kiocb, struct aio_kiocb, rw);
 
 	if (!list_empty_careful(&iocb->ki_list))
@@ -1545,8 +1565,19 @@ static int aio_read(struct kiocb *req, const struct iocb *iocb,
 	if (ret < 0)
 		return ret;
 	ret = rw_verify_area(READ, file, &req->ki_pos, iov_iter_count(&iter));
+
+	// zhengxd: kernel stat : use for io queue == 1 
+	// atomic_long_inc(&aio_count);
+	// atomic_long_add(ktime_sub(ktime_get(), io_start), &aio_time);
+	
+	// ktime_t read_iter_start = ktime_get();
 	if (!ret)
 		aio_rw_done(req, call_read_iter(file, req, &iter));
+
+	// zhengxd: kernel stat
+	// atomic_long_inc(&read_iter_count);
+	// atomic_long_add(ktime_sub(ktime_get(), read_iter_start), &read_iter_time);
+
 	kfree(iovec);
 	return ret;
 }
@@ -1904,8 +1935,8 @@ static int io_submit_one(struct kioctx *ctx, struct iocb __user *user_iocb,
 	}
 	return err;
 }
-extern atomic_long_t aio_time;
-extern atomic_long_t aio_count;
+
+
 /* sys_io_submit:
  *	Queue the nr iocbs pointed to by iocbpp for processing.  Returns
  *	the number of iocbs queued.  May return -EINVAL if the aio_context
@@ -1922,7 +1953,7 @@ SYSCALL_DEFINE3(io_submit, aio_context_t, ctx_id, long, nr,
 		struct iocb __user * __user *, iocbpp)
 {
 	// zhengxd: kernel stat
-	// ktime_t aio_start = ktime_get();
+	// io_start = ktime_get();
 	struct kioctx *ctx;
 	long ret = 0;
 	int i = 0;
@@ -1952,7 +1983,7 @@ SYSCALL_DEFINE3(io_submit, aio_context_t, ctx_id, long, nr,
 
 		ret = io_submit_one(ctx, user_iocb, false);
 		// zhengxd: kernel stat
-		// atomic_long_inc(&aio_count);
+		// atomic_long_inc(&io_count);
 		if (ret)
 			break;
 	}
@@ -1960,32 +1991,25 @@ SYSCALL_DEFINE3(io_submit, aio_context_t, ctx_id, long, nr,
 		blk_finish_plug(&plug);
 	
 	// zhengxd: kernel stat
-	// atomic_long_add(ktime_sub(ktime_get(), aio_start), &aio_time);
+	// atomic_long_add(ktime_sub(ktime_get(), io_start), &io_time);
 
 	percpu_ref_put(&ctx->users);
 	return i ? i : ret;
 }
-
-extern atomic_long_t aio_hit_time;
-extern atomic_long_t aio_hit_count;
-
-extern atomic_long_t read_iter_time;
-extern atomic_long_t read_iter_count;
 
 /*zhengxd: aio_read_hit
 *  @bpf_fd: bpf function index
 *  @scratch_buf: parasitic request array
 */
 static int aio_read_hit(struct kiocb *req, const struct iocb *iocb,
-			bool vectored, bool compat, unsigned int bpf_fd, char __user *scratch_buf)
+			bool vectored, bool compat, struct hitchhike __user *hit)
 {
 	struct iovec inline_vecs[UIO_FASTIOV], *iovec = inline_vecs;
 	struct iov_iter iter;
 	struct file *file;
 	int ret;
 	// zhengxd: kiocb init with hit info
-	req->hit_scratch_buf = scratch_buf;
-	req->xrp_bpf_fd = bpf_fd;
+	req->hit = hit;
 	req->hit_enabled = true;
 	// zhengxd: new: kiocb init data_len
 	ret = aio_prep_rw(req, iocb);
@@ -2004,6 +2028,11 @@ static int aio_read_hit(struct kiocb *req, const struct iocb *iocb,
 	//zhengxd: new: data_len; old: iov_iter_count(&iter);
 	//zhengxd: fixme: add hitchhike check
 	ret = rw_verify_area(READ, file, &req->ki_pos, req->data_len);
+
+	// zhengxd: kernel stat: use for io queue ==1
+	// atomic_long_inc(&aio_hit_count);
+	// atomic_long_add(ktime_sub(ktime_get(), io_start), &aio_hit_time);
+
 	// zhengxd: kernel stat
 	// ktime_t read_iter_start = ktime_get();
 	if (!ret)
@@ -2021,7 +2050,7 @@ static int aio_read_hit(struct kiocb *req, const struct iocb *iocb,
 */
 static int __io_submit_hit_one(struct kioctx *ctx, const struct iocb *iocb,
 			   struct iocb __user *user_iocb, struct aio_kiocb *req,
-			   bool compat, unsigned int bpf_fd, char __user *scratch_buf)
+			   bool compat, struct hitchhike __user *hit)
 {
 	req->ki_filp = fget(iocb->aio_fildes);
 	if (unlikely(!req->ki_filp))
@@ -2055,7 +2084,7 @@ static int __io_submit_hit_one(struct kioctx *ctx, const struct iocb *iocb,
 
 	switch (iocb->aio_lio_opcode) {
 	case IOCB_CMD_PREAD:
-		return aio_read_hit(&req->rw, iocb, false, compat, bpf_fd, scratch_buf);
+		return aio_read_hit(&req->rw, iocb, false, compat, hit);
 	case IOCB_CMD_PWRITE:
 		return aio_write(&req->rw, iocb, false, compat);
 	case IOCB_CMD_PREADV:
@@ -2079,14 +2108,20 @@ static int __io_submit_hit_one(struct kioctx *ctx, const struct iocb *iocb,
 *  @scratch_buf: parasitic request array
 */
 static int io_submit_hit_one(struct kioctx *ctx, struct iocb __user *user_iocb,
-			 bool compat, unsigned int bpf_fd, char __user * scratch_buf)
+			 bool compat, struct hitchhike __user * hit_buf)
 {
 	struct aio_kiocb *req;
 	struct iocb iocb;
+	// struct hitchhike *hit;
 	int err;
+	// hit = kmalloc(sizeof(struct hitchhike), GFP_KERNEL);
+	// if(!hit)
+	// 	return -ENOMEM;
 
 	if (unlikely(copy_from_user(&iocb, user_iocb, sizeof(iocb))))
 		return -EFAULT;
+	// if (unlikely(copy_from_user(hit, hit_buf, sizeof(struct hitchhike))))
+	// 	return -EFAULT;
 
 	/* enforce forwards compatibility on users */
 
@@ -2110,7 +2145,7 @@ static int io_submit_hit_one(struct kioctx *ctx, struct iocb __user *user_iocb,
 	if (unlikely(!req))
 		return -EAGAIN;
 
-	err = __io_submit_hit_one(ctx, &iocb, user_iocb, req, compat, bpf_fd, scratch_buf);
+	err = __io_submit_hit_one(ctx, &iocb, user_iocb, req, compat, hit_buf);
 
 	/* Done with the synchronous reference */
 	iocb_put(req);
@@ -2142,12 +2177,12 @@ static int io_submit_hit_one(struct kioctx *ctx, struct iocb __user *user_iocb,
  *  @bpf_fd: bpf prog 
  *  @scratch_bufs: every io has a scratch_buf 
  */
-// zhengxd: aio_hit entry
+// zhengxd: aio_hit entry(bpf_fd reserved)
 SYSCALL_DEFINE5(io_submit_hit, aio_context_t, ctx_id, long, nr, struct iocb __user * __user *, iocbpp,
-					unsigned int, bpf_fd, char __user * __user *, scratch_bufs)
+					unsigned int, bpf_fd, struct hitchhike __user * __user *, hit_bufs)
 {
 	// zhengxd: kernel stat
-	// ktime_t aio_hit_start = ktime_get();
+	// io_start = ktime_get();
 	struct kioctx *ctx;
 	long ret = 0;
 	int i = 0;
@@ -2170,9 +2205,9 @@ SYSCALL_DEFINE5(io_submit_hit, aio_context_t, ctx_id, long, nr, struct iocb __us
 		// blk_start_plug(&plug);
 	for (i = 0; i < nr; i++) {
 		// zhengxd: every aio req has a scratch_buf, like __user* iocb
-		char __user * scratch_buf;
+		struct hitchhike __user * hit_buf;
 		//zhengxd: scratch size : 4096(char: 1 bytes )
-		if (unlikely(get_user(scratch_buf, scratch_bufs + i))) {
+		if (unlikely(get_user(hit_buf, hit_bufs + i))) {
 			ret = -EFAULT;
 			break;
 		}
@@ -2182,17 +2217,17 @@ SYSCALL_DEFINE5(io_submit_hit, aio_context_t, ctx_id, long, nr, struct iocb __us
 			break;
 		}
 		// zhengxd: submit io one by one 
-		ret = io_submit_hit_one(ctx, user_iocb, false, bpf_fd, scratch_buf);
+		ret = io_submit_hit_one(ctx, user_iocb, false, hit_buf);
 		if (ret)
 			break;
 		// zhengxd: kernel stat
-		// atomic_long_inc(&aio_hit_count);
+		// atomic_long_inc(&io_count);
 	}
 	// zhengxd: we disable plug
 	// if (nr > AIO_PLUG_THRESHOLD)
 		// blk_finish_plug(&plug);
 	// zhengxd: kernel stat
-	// atomic_long_add(ktime_sub(ktime_get(), aio_hit_start), &aio_hit_time);
+	// atomic_long_add(ktime_sub(ktime_get(), io_start), &io_time);
 
 	percpu_ref_put(&ctx->users);
 	return i ? i : ret;

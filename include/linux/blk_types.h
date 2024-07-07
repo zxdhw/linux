@@ -7,6 +7,7 @@
 #define __LINUX_BLK_TYPES_H
 
 #include "asm-generic/int-ll64.h"
+#include "linux/aio_abi.h"
 #include "linux/workqueue.h"
 #include <linux/types.h>
 #include <linux/bvec.h>
@@ -280,13 +281,11 @@ struct bio {
 
 	bool			hit_enabled;
 	struct inode		*xrp_inode;
-	u64			xrp_partition_start_sector;
 	int			xrp_count;
 	int			xrp_buffer_size;
-	struct page		*xrp_scratch_page;
-	u64			*xrp_scratch_offset;
+	// struct page		*xrp_scratch_page;
+	struct hitchhike	*hit;
 	struct bpf_prog		*xrp_bpf_prog;
-	u16			qid;
 	u64			xrp_extent_version;
 	loff_t			xrp_file_offset;
 

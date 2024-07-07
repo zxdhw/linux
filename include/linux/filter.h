@@ -1481,18 +1481,18 @@ struct bpf_xrp_kern {
 	char *scratch;
 };
 
-struct hitchhike_kern {
-	uint64_t done;
-	uint64_t iter;
-	uint64_t max;
-	uint64_t in_use;
-	uint64_t page[32];
-	uint64_t addr[32];
-	uint64_t lba[32];
-	uint64_t size[32];
-	char *data;
-	char *scratch;
-};
+// struct hitchhike_kern {
+// 	uint64_t done;
+// 	uint64_t iter;
+// 	uint64_t max;
+// 	uint64_t in_use;
+// 	uint64_t page[32];
+// 	uint64_t addr[32];
+// 	uint64_t lba[32];
+// 	uint64_t size[32];
+// 	char *data;
+// 	char *scratch;
+// };
 
 struct xrp_stats {
 	long xrp_ebpf_time;
@@ -1514,6 +1514,9 @@ struct xrp_stats {
 
 struct hit_stats {
 
+	long io_time;
+	long io_count;
+
 	long aio_time;
 	long aio_count;
 
@@ -1532,8 +1535,17 @@ struct hit_stats {
 	long driver_time;
 	long driver_count;
 
+	long dio_time;
+	long dio_count;
+
+	long filemap_wait_time;
+	long filemap_wait_count;
+
 	long iomap_time;
 	long iomap_count;
+
+	long iomap_hit_time;
+	long iomap_hit_count;
 
 	long get_page_time;
 	long get_page_count;
@@ -1541,17 +1553,20 @@ struct hit_stats {
 	long bio_time;
 	long bio_count;
 
+	long hit_buf_time;
+	long hit_buf_count;
+
 	long req_time;
 	long req_count;
 
 	long dma_time;
 	long dma_count;
 
+	long hit_cmd_time;
+	long hit_cmd_count;
+
 	long sq_time;
 	long sq_count;
-
-	long sq_cpy_time;
-	long sq_cpy_count;
 
 	long sq_write_time;
 	long sq_write_count;

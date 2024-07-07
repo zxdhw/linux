@@ -9,6 +9,8 @@
 #include <linux/iomap.h>
 #include "trace.h"
 
+extern atomic_long_t iomap_time;
+extern atomic_long_t iomap_count;
 /*
  * Execute a iomap write on a segment of the mapping that spans a
  * contiguous range of pages that have identical block mapping state.
@@ -43,7 +45,13 @@ iomap_apply(struct inode *inode, loff_t pos, loff_t length, unsigned flags,
 	 * expose transient stale data. If the reserve fails, we can safely
 	 * back out at this point as there is nothing to undo.
 	 */
+
+	// zhengxd: kernel stat
+	// ktime_t iomap_start = ktime_get();
 	ret = ops->iomap_begin(inode, pos, length, flags, &iomap, &srcmap);
+	// atomic_long_inc(&iomap_count);
+	// atomic_long_add(ktime_sub(ktime_get(), iomap_start), &iomap_time);
+
 	if (ret)
 		return ret;
 	if (WARN_ON(iomap.offset > pos)) {

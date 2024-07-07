@@ -55,6 +55,27 @@ struct iomap_dio {
 	};
 };
 
+/*----zhengxd kernel stat*/
+extern atomic_long_t filemap_wait_time;
+extern atomic_long_t filemap_wait_count;
+extern atomic_long_t iomap_hit_time;
+extern atomic_long_t iomap_hit_count;
+extern atomic_long_t get_page_time;
+extern atomic_long_t get_page_count;
+extern atomic_long_t hit_buf_time;
+extern atomic_long_t hit_buf_count;
+extern atomic_long_t bio_time;
+extern atomic_long_t bio_count;
+extern atomic_long_t fs_time;
+extern atomic_long_t fs_count;
+extern ktime_t fs_start;
+extern atomic_long_t dio_time;
+extern atomic_long_t dio_count;
+extern atomic_long_t block_time;
+extern atomic_long_t block_count;
+
+/*----zhengxd kernel stat*/
+
 int iomap_dio_iopoll(struct kiocb *kiocb, bool spin)
 {
 	struct request_queue *q = READ_ONCE(kiocb->private);
@@ -65,10 +86,6 @@ int iomap_dio_iopoll(struct kiocb *kiocb, bool spin)
 }
 EXPORT_SYMBOL_GPL(iomap_dio_iopoll);
 
-extern atomic_long_t fs_time;
-extern atomic_long_t fs_count;
-extern ktime_t fs_start;
-
 static void iomap_dio_submit_bio(struct iomap_dio *dio, struct iomap *iomap,
 		struct bio *bio, loff_t pos)
 {
@@ -77,12 +94,8 @@ static void iomap_dio_submit_bio(struct iomap_dio *dio, struct iomap *iomap,
 	if (dio->iocb->ki_flags & IOCB_HIPRI)
 		bio_set_polled(bio, dio->iocb);
 	
-	// zhengxd: kernel stat
-	// if(bio->hit_enabled){
 	// atomic_long_inc(&fs_count);
-	// 	printk("----fs io time is %lld----\n",ktime_sub(ktime_get(), fs_start));
 	// atomic_long_add(ktime_sub(ktime_get(), fs_start), &fs_time);
-	// }
 
 	dio->submit.last_queue = bdev_get_queue(iomap->bdev);
 	if (dio->dops && dio->dops->submit_io)
@@ -91,7 +104,7 @@ static void iomap_dio_submit_bio(struct iomap_dio *dio, struct iomap *iomap,
 				iomap, bio, pos);
 	else
 		dio->submit.cookie = submit_bio(bio);
-
+		
 }
 
 ssize_t iomap_dio_complete(struct iomap_dio *dio)
@@ -173,13 +186,10 @@ static void iomap_dio_bio_end_io(struct bio *bio)
 	struct iomap_dio *dio = bio->bi_private;
 	bool should_dirty = (dio->flags & IOMAP_DIO_DIRTY);
 
-	if (bio->hit_enabled) {
-		put_page(bio->xrp_scratch_page);
-		bio->xrp_scratch_page = NULL;
-		// bpf_prog_put(bio->xrp_bpf_prog);
-		// bio->xrp_bpf_prog = NULL;
+	if(bio->hit_enabled){
+		kfree(bio->hit);
+		bio->hit = NULL;
 	}
-
 	if (bio->bi_status)
 		iomap_dio_set_error(dio, blk_status_to_errno(bio->bi_status));
 
@@ -253,12 +263,7 @@ iomap_dio_bio_opflags(struct iomap_dio *dio, struct iomap *iomap, bool use_fua)
 
 	return opflags;
 }
-extern atomic_long_t iomap_time;
-extern atomic_long_t iomap_count;
-extern atomic_long_t get_page_time;
-extern atomic_long_t get_page_count;
-extern atomic_long_t bio_time;
-extern atomic_long_t bio_count;
+
 
 static loff_t
 iomap_dio_bio_actor(struct inode *inode, loff_t pos, loff_t length,
@@ -354,9 +359,6 @@ iomap_dio_bio_actor(struct inode *inode, loff_t pos, loff_t length,
 		//zhengxd: xrp init
 		//zhengxd: bio_iov_iter_get_page need hit_enabled
 		bio->hit_enabled = dio->iocb->hit_enabled;
-		bio->xrp_inode = dio->iocb->ki_filp->f_inode;
-		bio->xrp_partition_start_sector = 0;
-		bio->xrp_count = 1;
 		bio->xrp_buffer_size = nr_pages;
 
 		// zhengxd: kernel stat
@@ -385,42 +387,37 @@ iomap_dio_bio_actor(struct inode *inode, loff_t pos, loff_t length,
 			goto zero_tail;
 		}
 
-		// bio->hit_enabled = dio->iocb->hit_enabled;
-		// bio->xrp_inode = dio->iocb->ki_filp->f_inode;
-		// bio->xrp_partition_start_sector = 0;
-		// bio->xrp_count = 1;
 		//zhengxd: init bi_size with x2rp_data_len
 		if(bio->hit_enabled) {
 			bio->bi_iter.bi_size = dio->iocb->data_len;
 		}
 		if (bio->hit_enabled) {
-			if (get_user_pages_fast(dio->iocb->hit_scratch_buf, 1, FOLL_WRITE, &bio->xrp_scratch_page) != 1) {
-				printk("iomap_dio_bio_actor: failed to get scratch page\n");
-				bio->hit_enabled = false;
-			}
-			loff_t offset, len;
-			offset = (unsigned long)dio->iocb->hit_scratch_buf & (PAGE_SIZE - 1);
-    		bio->xrp_scratch_offset= kmap(bio->xrp_scratch_page) + offset;
-
 			//zhengxd: kernel stat
 			// ktime_t iomap_start = ktime_get();
+			bio->hit = kmalloc(sizeof(struct hitchhike), GFP_KERNEL);
+			if(!bio->hit)
+				return -ENOMEM;
+			if (unlikely(copy_from_user(bio->hit, dio->iocb->hit, sizeof(struct hitchhike))))
+				return -EFAULT;
+
+			loff_t len;
 			int iter;
-			struct hitchhike_kern *ebpf_context = (struct hitchhike_kern *)bio->xrp_scratch_offset;
-			for(iter = 0; iter <= ebpf_context->max; iter++){
-				len = ebpf_context->size[iter];
-				pos = ebpf_context->addr[iter];
+			for(iter = 0; iter <= bio->hit->max; iter++){
+				//zhengxd: size always == 4096
+				len = 4096;
+				pos = bio->hit->addr[iter];
 				struct iomap iomap_t = { .type = IOMAP_HOLE };
 				struct iomap srcmap_t = { .type = IOMAP_HOLE };
 				ret = dio->iocb->ops->iomap_begin(inode, pos, len, iomap->flags, &iomap_t, &srcmap_t);
 				if (ret)
 					return ret;
 				// lba in 512B
-				ebpf_context->lba[iter] = iomap_sector(&iomap_t, pos);
+				bio->hit->addr[iter] = iomap_sector(&iomap_t, pos);
 				// zhengxd: kernel stat
-				// atomic_long_inc(&iomap_count);
+				// atomic_long_inc(&iomap_hit_count);
 			}
 			// zhengxd: kernel stat
-			// atomic_long_add(ktime_sub(ktime_get(), iomap_start), &iomap_time);
+			// atomic_long_add(ktime_sub(ktime_get(), iomap_start), &iomap_hit_time);
 		}
 
 		//zhengxd: nr_pages > 256 (error)
@@ -538,6 +535,7 @@ iomap_dio_actor(struct inode *inode, loff_t pos, loff_t length,
 	}
 }
 
+
 /*
  * iomap_dio_rw() always completes O_[D]SYNC writes regardless of whether the IO
  * is being issued as AIO or not.  This allows us to optimise pure data writes
@@ -585,6 +583,9 @@ __iomap_dio_rw(struct kiocb *iocb, struct iov_iter *iter,
 	if(iocb->hit_enabled && !data_len)
 		return NULL;
 
+	// zhengxd: kernel stat
+	// ktime_t dio_start = ktime_get();	
+
 	dio = kmalloc(sizeof(*dio), GFP_KERNEL);
 	if (!dio)
 		return ERR_PTR(-ENOMEM);
@@ -601,6 +602,10 @@ __iomap_dio_rw(struct kiocb *iocb, struct iov_iter *iter,
 	dio->submit.waiter = current;
 	dio->submit.cookie = BLK_QC_T_NONE;
 	dio->submit.last_queue = NULL;
+
+	// zhengxd: kernel stat
+	// atomic_long_inc(&dio_count);
+	// atomic_long_add(ktime_sub(ktime_get(), dio_start), &dio_time);
 
 	if (iov_iter_rw(iter) == READ) {
 		if (pos >= dio->i_size)
@@ -641,7 +646,12 @@ __iomap_dio_rw(struct kiocb *iocb, struct iov_iter *iter,
 		iomap_flags |= IOMAP_OVERWRITE_ONLY;
 	}
 	//zhengxd: fixme : hitchhike need wait
+	// zhengxd: kernel stat
+	// ktime_t filemap_start = ktime_get();
 	ret = filemap_write_and_wait_range(mapping, pos, end);
+	// atomic_long_inc(&filemap_wait_count);
+	// atomic_long_add(ktime_sub(ktime_get(), filemap_start), &filemap_wait_time);
+
 	if (ret)
 		goto out_free_dio;
 

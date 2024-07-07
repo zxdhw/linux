@@ -2,6 +2,7 @@
 #ifndef _LINUX_BLKDEV_H
 #define _LINUX_BLKDEV_H
 
+#include "asm-generic/int-ll64.h"
 #include <linux/sched.h>
 #include <linux/sched/clock.h>
 #include <linux/major.h>
@@ -234,10 +235,11 @@ struct request {
 		u64 fifo_time;
 	};
 
-	struct nvme_command *xrp_command;
-	struct nvme_command *hit_command[32];
-	u64	hit;
-	u64	hit_max;
+	struct nvme_command *hit_command[128];
+	u64 hit_value;
+	u64	hit_main;
+	u64 hit;
+	u64 done;
 
 	/*
 	 * completion callback.

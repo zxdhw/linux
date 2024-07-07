@@ -945,7 +945,6 @@ blk_status_t nvme_setup_cmd(struct nvme_ns *ns, struct request *req,
 	}
 
 	cmd->common.command_id = req->tag;
-	
 	trace_nvme_setup_cmd(req, cmd);
 	return ret;
 }

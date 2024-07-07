@@ -1963,9 +1963,12 @@ static void blk_mq_bio_to_request(struct request *rq, struct bio *bio,
 	blk_account_io_start(rq);
 }
 //zhengxd: end block layer
+/*zhengxd: kernel stat*/
 extern atomic_long_t block_time;
 extern atomic_long_t block_count;
 extern ktime_t block_start;
+extern atomic_long_t driver_time;
+extern atomic_long_t driver_count;
 
 static blk_status_t __blk_mq_issue_directly(struct blk_mq_hw_ctx *hctx,
 					    struct request *rq,
@@ -1986,20 +1989,16 @@ static blk_status_t __blk_mq_issue_directly(struct blk_mq_hw_ctx *hctx,
 	 * Any other error (busy), just add it to our list as we
 	 * previously would have done.
 	 */
-	//zhengxd: block layer end
-	// zhengxd: kernel stat
-	// struct request *req = bd.rq;
-	// bool print =false;
-	// if(req->bio->hit_enabled){
-	// 	print = true;
-	// }
+	//zhengxd: block layer end 
+	//zhengxd: kernel stat use for depth == 1
+	// atomic_long_inc(&block_count);
+	// atomic_long_add(ktime_sub(ktime_get(), block_start), &block_time);
+
+	// ktime_t driver_start = ktime_get();
 	ret = q->mq_ops->queue_rq(hctx, &bd);
-	// zhengxd: kernel stat
-	// if(print){
-	// 	atomic_long_inc(&block_count);
-	// 	printk("----block io time is %lld----\n",ktime_sub(ktime_get(), block_start));
-	// 	atomic_long_add(ktime_sub(ktime_get(), block_start), &block_time);
-	// }
+
+	// atomic_long_inc(&driver_count);
+	// atomic_long_add(ktime_sub(ktime_get(), driver_start), &driver_time);
 
 	switch (ret) {
 	case BLK_STS_OK:
@@ -2176,8 +2175,7 @@ extern atomic_long_t req_count;
 //zhengxd: mq entry
 blk_qc_t blk_mq_submit_bio(struct bio *bio)
 {
-	//zhengxd: kernel stat
-	// ktime_t req_start = ktime_get();
+
 	struct request_queue *q = bio->bi_bdev->bd_disk->queue;
 	const int is_sync = op_is_sync(bio->bi_opf);
 	const int is_flush_fua = op_is_flush(bio->bi_opf);
@@ -2193,7 +2191,7 @@ blk_qc_t blk_mq_submit_bio(struct bio *bio)
 	bool hipri;
 	
 	blk_queue_bounce(q, &bio);
-	//zhengxd: if(bio > 128KB || segments >= 33) 
+	//zhengxd: if(bio > max_sectors || segments >= max_segments) 
 	__blk_queue_split(&bio, &nr_segs);
 	//zhegnxd: data check protection(dont use)
 	if (!bio_integrity_prep(bio))
@@ -2210,6 +2208,9 @@ blk_qc_t blk_mq_submit_bio(struct bio *bio)
 	hipri = bio->bi_opf & REQ_HIPRI;
 
 	data.cmd_flags = bio->bi_opf;
+	
+	//zhengxd: kernel stat
+	// ktime_t req_start = ktime_get();
 	//zhengxd: alloc req from hctx->rqs
 	rq = __blk_mq_alloc_request(&data);
 	if (unlikely(!rq)) {
@@ -2234,7 +2235,6 @@ blk_qc_t blk_mq_submit_bio(struct bio *bio)
 	}
 	// if(bio->hit_enabled){
 		// atomic_long_inc(&req_count);
-		// printk("----page io time is %lld----\n",ktime_sub(ktime_get(), get_page_start));
 		// atomic_long_add(ktime_sub(ktime_get(), req_start), &req_time);
 	// }
 

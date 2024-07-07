@@ -9,6 +9,7 @@
 #ifndef _LINUX_SYSCALLS_H
 #define _LINUX_SYSCALLS_H
 
+#include "linux/fs.h"
 struct __aio_sigset;
 struct epoll_event;
 struct iattr;
@@ -71,6 +72,7 @@ struct open_how;
 struct mount_attr;
 struct xrp_stats;
 struct hit_stats;
+struct hitchhike;
 
 #include <linux/types.h>
 #include <linux/aio_abi.h>

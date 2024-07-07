@@ -319,9 +319,12 @@ enum rw_hint {
 #define IOCB_WAITQ		(1 << 19)
 #define IOCB_NOIO		(1 << 20)
 
+struct hitchhike;
+
 struct kiocb {
 	struct file		*ki_filp;
 	bool			hit_enabled;
+	struct hitchhike __user	*hit;
 	char __user		*hit_scratch_buf;
 	unsigned int		xrp_bpf_fd;
 	// zhengxd: add data len; 

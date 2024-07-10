@@ -190,9 +190,9 @@ static void iomap_dio_bio_end_io(struct bio *bio)
 		kfree(bio->hit);
 		bio->hit = NULL;
 	}
-	if (bio->bi_status)
+	if (bio->bi_status){
 		iomap_dio_set_error(dio, blk_status_to_errno(bio->bi_status));
-
+	}
 	if (atomic_dec_and_test(&dio->ref)) {
 		if (dio->wait_for_completion) {
 			struct task_struct *waiter = dio->submit.waiter;
@@ -397,24 +397,44 @@ iomap_dio_bio_actor(struct inode *inode, loff_t pos, loff_t length,
 			bio->hit = kmalloc(sizeof(struct hitchhike), GFP_KERNEL);
 			if(!bio->hit)
 				return -ENOMEM;
-			if (unlikely(copy_from_user(bio->hit, dio->iocb->hit, sizeof(struct hitchhike))))
+			if (unlikely(copy_from_user(bio->hit, dio->iocb->hit, sizeof(struct hitchhike)))){
 				return -EFAULT;
+			}
 
-			loff_t len;
+			u64 len, end;
 			int iter;
-			for(iter = 0; iter <= bio->hit->max; iter++){
-				//zhengxd: size always == 4096
-				len = 4096;
-				pos = bio->hit->addr[iter];
-				struct iomap iomap_t = { .type = IOMAP_HOLE };
-				struct iomap srcmap_t = { .type = IOMAP_HOLE };
-				ret = dio->iocb->ops->iomap_begin(inode, pos, len, iomap->flags, &iomap_t, &srcmap_t);
-				if (ret)
-					return ret;
-				// lba in 512B
-				bio->hit->addr[iter] = iomap_sector(&iomap_t, pos);
-				// zhengxd: kernel stat
-				// atomic_long_inc(&iomap_hit_count);
+			if(bio->hit->in_use){
+				for(iter = 0; iter <= bio->hit->max; iter++){
+					//zhengxd: size always == 4096
+					len = 4096;
+					pos = bio->hit->addr[iter];
+					struct iomap iomap_t = { .type = IOMAP_HOLE };
+					struct iomap srcmap_t = { .type = IOMAP_HOLE };
+					ret = dio->iocb->ops->iomap_begin(inode, pos, len, iomap->flags, &iomap_t, &srcmap_t);
+					if (ret)
+						return ret;
+					if (WARN_ON(iomap_t.offset > pos)) {
+						return -EIO;
+					}
+					if (WARN_ON(iomap_t.length == 0)) {
+						return -EIO;
+					}
+					
+					end = iomap_t.offset + iomap_t.length;
+					if (srcmap_t.type != IOMAP_HOLE)
+						end = min(end, srcmap_t.offset + srcmap_t.length);
+					//zhengxd: length check and cut
+					if (pos + length > end)
+						len = end - pos;
+					// lba in 512B
+					if(len != 4096){
+						printk("----iomap hit error: length is %lld", len);
+					}
+					bio->hit->addr[iter] = iomap_sector(&iomap_t, pos);
+				
+					// zhengxd: kernel stat
+					// atomic_long_inc(&iomap_hit_count);
+				}
 			}
 			// zhengxd: kernel stat
 			// atomic_long_add(ktime_sub(ktime_get(), iomap_start), &iomap_hit_time);
@@ -689,7 +709,6 @@ __iomap_dio_rw(struct kiocb *iocb, struct iov_iter *iter,
 			ret = iomap_apply(inode, pos, count, iomap_flags, ops, dio,
 					iomap_dio_actor);
 		}
-
 		if (ret <= 0) {
 			/* magic error code to fall back to buffered I/O */
 			if (ret == -ENOTBLK) {

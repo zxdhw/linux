@@ -497,7 +497,7 @@ unsigned int irq_calc_affinity_vectors(unsigned int minvec, unsigned int maxvec,
 				       const struct irq_affinity *affd)
 {
 	unsigned int resv = affd->pre_vectors + affd->post_vectors;
-	printk("----zxdinter: resv is %d,affd->pre_vectors is %d,affd->post_vectors is %d\n-----",resv,affd->pre_vectors,affd->post_vectors);
+	// printk("----zxdinter: resv is %d,affd->pre_vectors is %d,affd->post_vectors is %d\n-----",resv,affd->pre_vectors,affd->post_vectors);
 	unsigned int set_vecs;
 
 	if (resv > minvec)
@@ -505,7 +505,7 @@ unsigned int irq_calc_affinity_vectors(unsigned int minvec, unsigned int maxvec,
 
 	if (affd->calc_sets) {
 		set_vecs = maxvec - resv;
-		printk("----zxdinter: set_vecs is %d,maxvec is %d,resvis %d\n-----",set_vecs,set_vecs,resv);
+		// printk("----zxdinter: set_vecs is %d,maxvec is %d,resvis %d\n-----",set_vecs,set_vecs,resv);
 	} else {
 		get_online_cpus();
 		set_vecs = cpumask_weight(cpu_possible_mask);

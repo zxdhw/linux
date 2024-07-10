@@ -2192,7 +2192,14 @@ blk_qc_t blk_mq_submit_bio(struct bio *bio)
 	
 	blk_queue_bounce(q, &bio);
 	//zhengxd: if(bio > max_sectors || segments >= max_segments) 
-	__blk_queue_split(&bio, &nr_segs);
+
+	if(bio->hit_enabled && bio->hit->in_use){
+		nr_segs = bio->hit->max+2;
+	}else if(bio->hit_enabled && !bio->hit->in_use){
+		nr_segs = 1;
+	}else{
+		__blk_queue_split(&bio, &nr_segs);
+	}
 	//zhegnxd: data check protection(dont use)
 	if (!bio_integrity_prep(bio))
 		goto queue_exit;

@@ -262,6 +262,7 @@ static struct bio *blk_bio_segment_split(struct request_queue *q,
 				sectors += bv.bv_len >> 9;
 			} else {
 				printk("----bio segments error: bio nsegs is %d, sectors is %d-----\n", nsegs, sectors);
+				printk("----bio segments error: bio max nsegs is %d, max sectors is %d-----\n", max_segs, max_sectors);
 			}
 		}
 	} else {

@@ -3,6 +3,7 @@
  * Copyright (C) 2010 Red Hat, Inc.
  * Copyright (c) 2016-2018 Christoph Hellwig.
  */
+#include "linux/aio_abi.h"
 #include "linux/kern_levels.h"
 #include "linux/ktime.h"
 #include "linux/mm.h"
@@ -401,10 +402,10 @@ iomap_dio_bio_actor(struct inode *inode, loff_t pos, loff_t length,
 				return -EFAULT;
 			}
 
-			loff_t len;
+			u64 len, end;
 			int iter;
 			if(bio->hit->in_use){
-				for(iter = 0; iter <= bio->hit->max; iter++){
+				for(iter = 0; iter <= bio->hit->max && iter <= HIT_MAX; iter++){
 					//zhengxd: size always == 4096
 					len = 4096;
 					pos = bio->hit->addr[iter];
@@ -413,8 +414,25 @@ iomap_dio_bio_actor(struct inode *inode, loff_t pos, loff_t length,
 					ret = dio->iocb->ops->iomap_begin(inode, pos, len, iomap->flags, &iomap_t, &srcmap_t);
 					if (ret)
 						return ret;
+					if (WARN_ON(iomap_t.offset > pos)) {
+						return -EIO;
+					}
+					if (WARN_ON(iomap_t.length == 0)) {
+						return -EIO;
+					}
+					
+					end = iomap_t.offset + iomap_t.length;
+					if (srcmap_t.type != IOMAP_HOLE)
+						end = min(end, srcmap_t.offset + srcmap_t.length);
+					//zhengxd: length check and cut
+					if (pos + length > end)
+						len = end - pos;
 					// lba in 512B
+					if(len != 4096){
+						printk("----iomap hit error: length is %lld", len);
+					}
 					bio->hit->addr[iter] = iomap_sector(&iomap_t, pos);
+				
 					// zhengxd: kernel stat
 					// atomic_long_inc(&iomap_hit_count);
 				}

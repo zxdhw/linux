@@ -108,6 +108,8 @@ struct iocb {
 	__u32	aio_resfd;
 }; /* 64 bytes */
 
+
+#define HIT_MAX	126
 struct hitchhike {
 	__s32 max;
 	__s32 in_use;

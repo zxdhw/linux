@@ -75,7 +75,7 @@ static const struct kernel_param_ops io_queue_depth_ops = {
 };
 
 //zhengxd: io queue depth is 1024
-static unsigned int io_queue_depth = 1024;
+static unsigned int io_queue_depth = 10240;
 module_param_cb(io_queue_depth, &io_queue_depth_ops, &io_queue_depth, 0644);
 MODULE_PARM_DESC(io_queue_depth, "set io queue depth, should >= 2");
 
@@ -1053,7 +1053,7 @@ static void nvme_submit_cmd_work(struct request *req, struct nvme_command *cnmdp
 
 	/* address mapping */
 	// lba in 512B
-	for(iter = 0 ; iter <= req->bio->hit->max;) {
+	for(iter = 0 ; iter <= req->bio->hit->max && iter <= HIT_MAX;) {
 
 		//alloc cmd & init
 		req->hit_command[iter] = kmalloc(sizeof(struct nvme_command), GFP_NOWAIT);
@@ -1149,7 +1149,6 @@ static blk_status_t nvme_queue_rq(struct blk_mq_hw_ctx *hctx,
 		// ktime_t hit_cmd_start = ktime_get();
 		req->hit = 1;
 		nvme_submit_cmd_work(req,&cmnd,nvmeq);
-
 		// atomic_long_inc(&hit_cmd_count);
 		// atomic_long_add(ktime_sub(ktime_get(), hit_cmd_start), &hit_cmd_time);
 	}

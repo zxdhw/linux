@@ -1229,7 +1229,7 @@ int pci_alloc_irq_vectors_affinity(struct pci_dev *dev, unsigned int min_vecs,
 		//zhengxd: one nvme ssd, 32 core: nvecs = 33
 		nvecs = __pci_enable_msix_range(dev, NULL, min_vecs, max_vecs,
 						affd, flags);
-		printk("----zxdinter: %d\n-----",nvecs);
+		// printk("----zxdinter: %d\n-----",nvecs);
 		if (nvecs > 0)
 			return nvecs;
 	}

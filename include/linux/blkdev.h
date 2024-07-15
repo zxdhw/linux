@@ -235,11 +235,13 @@ struct request {
 		u64 fifo_time;
 	};
 
-	struct nvme_command *hit_command[128];
+	struct nvme_command *hit_command;
 	u64 hit_value;
 	u64	hit_main;
 	u64 hit;
 	u64 done;
+	unsigned int *hit_tags;
+	u64 hit_max;
 
 	/*
 	 * completion callback.

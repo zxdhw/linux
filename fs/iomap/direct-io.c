@@ -405,7 +405,7 @@ iomap_dio_bio_actor(struct inode *inode, loff_t pos, loff_t length,
 			u64 len, end;
 			int iter;
 			if(bio->hit->in_use){
-				for(iter = 0; iter <= bio->hit->max && iter <= HIT_MAX; iter++){
+				for(iter = 0; (iter <= bio->hit->max) && (iter <= HIT_MAX); iter++){
 					//zhengxd: size always == 4096
 					len = 4096;
 					pos = bio->hit->addr[iter];

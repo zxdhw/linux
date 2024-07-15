@@ -395,6 +395,21 @@ retry:
 		msleep(3);
 		goto retry;
 	}
+	if(data->hit){
+		unsigned int iter;
+		for(iter = 0; iter < data->hit; iter++){
+			data->hit_tags[iter] = blk_mq_get_tag(data);
+			if (data->hit_tags[iter] == BLK_MQ_NO_TAG) {
+				/*
+				* Give up the CPU and sleep for a random short time to ensure
+				* that thread using a realtime scheduling class are migrated
+				* off the CPU, and thus off the hctx that is going away.
+				*/
+				msleep(1);
+				goto retry;
+			}
+		}
+	}
 	return blk_mq_rq_ctx_init(data, tag, alloc_time_ns);
 }
 
@@ -497,6 +512,15 @@ static void __blk_mq_free_request(struct request *rq)
 	rq->mq_hctx = NULL;
 	if (rq->tag != BLK_MQ_NO_TAG)
 		blk_mq_put_tag(hctx->tags, ctx, rq->tag);
+	//zhengxd: release tags
+	if(rq->hit_tags){
+		unsigned int iter;
+		for(iter = 0; iter < rq->hit_max; iter++){
+			blk_mq_put_tag(hctx->tags, ctx, rq->hit_tags[iter]);
+		}
+		kfree(rq->hit_tags);
+		rq->hit_tags = NULL;
+	}
 	if (sched_tag != BLK_MQ_NO_TAG)
 		blk_mq_put_tag(hctx->sched_tags, ctx, sched_tag);
 	blk_mq_sched_restart(hctx);
@@ -2215,6 +2239,11 @@ blk_qc_t blk_mq_submit_bio(struct bio *bio)
 	hipri = bio->bi_opf & REQ_HIPRI;
 
 	data.cmd_flags = bio->bi_opf;
+	data.hit = 0;
+	if(bio->hit_enabled && bio->hit->in_use){
+		data.hit = bio->hit->max + 1;
+		data.hit_tags = kmalloc(sizeof(unsigned int) * (bio->hit->max + 1), GFP_KERNEL);
+	}
 	
 	//zhengxd: kernel stat
 	// ktime_t req_start = ktime_get();
@@ -2226,6 +2255,12 @@ blk_qc_t blk_mq_submit_bio(struct bio *bio)
 			bio_wouldblock_error(bio);
 		goto queue_exit;
 	}
+	
+	if(bio->hit_enabled && bio->hit->in_use){
+		rq->hit_tags = data.hit_tags;
+		rq->hit_max = bio->hit->max + 1;
+	}
+
 	trace_block_getrq(bio);
 
 	rq_qos_track(q, rq, bio);

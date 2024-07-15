@@ -1053,37 +1053,40 @@ static void nvme_submit_cmd_work(struct request *req, struct nvme_command *cnmdp
 
 	/* address mapping */
 	// lba in 512B
-	for(iter = 0 ; iter <= req->bio->hit->max && iter <= HIT_MAX;) {
+retry:
+	if(req->bio->hit->max > HIT_MAX || req->bio->hit->max < 0){
+		req->done=1;
+		return;
+	}else{
+		req->hit_command = kmalloc(sizeof(struct nvme_command) *(req->bio->hit->max + 1), GFP_NOWAIT);
+		if(req->hit_command == NULL){
+			msleep(1);
+			goto retry;
+		}
+	}
+	for(iter = 0 ; (iter <= req->bio->hit->max);) {
 
 		//alloc cmd & init
-		req->hit_command[iter] = kmalloc(sizeof(struct nvme_command), GFP_NOWAIT);
-		memcpy(req->hit_command[iter],cnmdp, sizeof(struct nvme_command));
+		memcpy(&req->hit_command[iter],cnmdp, sizeof(struct nvme_command));
 		
 		//zhengxd: lba in 512B, datalen in bytes
 		disk_offset = req->bio->hit->addr[iter];
 		data_len = 4096;
 		//zhengxd: slba (512B)
-		req->hit_command[iter]->rw.slba = cpu_to_le64(nvme_sect_to_lba(req->q->queuedata, disk_offset));
-		req->hit_command[iter]->rw.length = cpu_to_le16((data_len >> 9) - 1);
+		req->hit_command[iter].rw.slba = cpu_to_le64(nvme_sect_to_lba(req->q->queuedata, disk_offset));
+		req->hit_command[iter].rw.length = cpu_to_le16((data_len >> 9) - 1);
 		
 		//zhengxd: length(7 sector), addr(bytes)
 		void **list = nvme_pci_iod_list(req);
 		__le64 *prp_list = list[0];
 		if(data_len == 4096){
-				req->hit_command[iter]->rw.dptr.prp1 = prp_list[iter];
+				req->hit_command[iter].rw.dptr.prp1 = prp_list[iter];
 		}else{
 			printk("----nvme_submit_work: length dismatch error\n");
 			return;
 		} 
 
-		//command id
-		// req->hit_command[iter]->rw.command_id += (iter + 1) << 10; 
-		// scope: 1~127
-		// req->hit_command[iter]->rw.rsvd2 = (iter + 1); 
-		// printk("----nvme_submit_work: hit id is %d, command id is %d\n",(req->hit_command[iter]->rw.command_id >> 10),
-		// 														(req->hit_command[iter]->rw.command_id & 0x3ff));
-
-		nvme_submit_cmd(nvmeq, req->hit_command[iter], false);
+		nvme_submit_cmd(nvmeq, &req->hit_command[iter], false);
 		iter++;
 	}
 }

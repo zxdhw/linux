@@ -157,6 +157,10 @@ struct blk_mq_alloc_data {
 	/* input & output parameter */
 	struct blk_mq_ctx *ctx;
 	struct blk_mq_hw_ctx *hctx;
+
+	/* hit tag*/
+	unsigned int hit;
+	unsigned int *hit_tags;
 };
 
 static inline bool blk_mq_is_sbitmap_shared(unsigned int flags)

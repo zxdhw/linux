@@ -560,13 +560,9 @@ static inline bool nvme_try_complete_req(struct request *req, __le16 status,
 {
 	struct nvme_request *rq = nvme_req(req);
 	if(req->hit && req->hit_value){
-		int iter;
 		if(req->hit_value > 1){
-			for(iter = 0;iter <= (req->hit_value -2);iter++){
-				// printk("----complete req: iter is %d", iter);
-				kfree(req->hit_command[iter]);
-				req->hit_command[iter] = NULL;
-			}
+				kfree(req->hit_command);
+				req->hit_command = NULL;
 		}
 	}
 

@@ -186,18 +186,18 @@ static inline void bio_advance_iter_single(const struct bio *bio,
 #define bio_for_each_bvec(bvl, bio, iter)			\
 	__bio_for_each_bvec(bvl, bio, iter, (bio)->bi_iter)
 
-#define __bio_for_each_bvec_xrp(bvl, bio, iter, start)		\
+#define __bio_for_each_bvec_hit(bvl, bio, iter, start)		\
 	for (iter = (start);						\
 		(iter).bi_idx < bio->bi_vcnt &&						\
-		((bvl = mp_bvec_iter_bvec_xrp((bio)->bi_io_vec, (iter))), 1); \
+		((bvl = mp_bvec_iter_bvec_hit((bio)->bi_io_vec, (iter))), 1); \
 	     (iter).bi_idx++)
 /* (iter).bi_idx < bio->bi_vcnt && 	\
-* ((bvl = mp_bvec_iter_bvec_xrp((bio)->bi_io_vec, (iter))),1); (iter).bi_idx++)
+* ((bvl = mp_bvec_iter_bvec_hit((bio)->bi_io_vec, (iter))),1); (iter).bi_idx++)
 */
 
 /* iterate over multi-page bvec */
-#define bio_for_each_bvec_xrp(bvl, bio, iter)			\
-	__bio_for_each_bvec_xrp(bvl, bio, iter, (bio)->bi_iter)
+#define bio_for_each_bvec_hit(bvl, bio, iter)			\
+	__bio_for_each_bvec_hit(bvl, bio, iter, (bio)->bi_iter)
 
 /*
  * Iterate over all multi-page bvecs. Drivers shouldn't use this version for the

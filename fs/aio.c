@@ -1436,10 +1436,8 @@ static void aio_remove_iocb(struct aio_kiocb *iocb)
 
 static void aio_complete_rw(struct kiocb *kiocb, long res, long res2)
 {
-	//zhengxd: free kiocb;
-	// kfree(kiocb->hit);
+	//zhengxd: hit ;
 	if(kiocb->hit_enabled){
-		// kfree(kiocb->hit);
 		kiocb->hit = NULL;
 	}
 
@@ -2135,8 +2133,9 @@ static int io_submit_hit_one(struct kioctx *ctx, struct iocb __user *user_iocb,
 	if (unlikely(
 	    (iocb.aio_buf != (unsigned long)iocb.aio_buf) ||
 	    (iocb.aio_nbytes != (size_t)iocb.aio_nbytes) ||
-	    ((ssize_t)iocb.aio_nbytes < 0)
-	   )) {
+	    ((ssize_t)iocb.aio_nbytes < 0) || ((ssize_t)iocb.aio_nbytes & (4096 - 1)) !=0 )
+	   ){
+		printk("----aio error: iocb.aio_nbytes is %llu",iocb.aio_nbytes);
 		pr_debug("EINVAL: overflow check\n");
 		return -EINVAL;
 	}

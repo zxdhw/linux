@@ -188,8 +188,9 @@ static void iomap_dio_bio_end_io(struct bio *bio)
 	bool should_dirty = (dio->flags & IOMAP_DIO_DIRTY);
 
 	if(bio->hit_enabled){
-		kfree(bio->hit);
+		kfree(dio->iocb->hit);
 		bio->hit = NULL;
+		dio->iocb->hit = NULL;
 	}
 	if (bio->bi_status){
 		iomap_dio_set_error(dio, blk_status_to_errno(bio->bi_status));
@@ -355,9 +356,6 @@ iomap_dio_bio_actor(struct inode *inode, loff_t pos, loff_t length,
 		bio->bi_end_io = iomap_dio_bio_end_io;
 		bio->bi_opf = bio_opf;
 
-		
-
-		//zhengxd: xrp init
 		//zhengxd: bio_iov_iter_get_page need hit_enabled
 		bio->hit_enabled = dio->iocb->hit_enabled;
 		bio->xrp_buffer_size = nr_pages;
@@ -388,20 +386,13 @@ iomap_dio_bio_actor(struct inode *inode, loff_t pos, loff_t length,
 			goto zero_tail;
 		}
 
-		//zhengxd: init bi_size with x2rp_data_len
-		if(bio->hit_enabled) {
-			bio->bi_iter.bi_size = dio->iocb->data_len;
-		}
 		if (bio->hit_enabled) {
 			//zhengxd: kernel stat
 			// ktime_t iomap_start = ktime_get();
-			bio->hit = kmalloc(sizeof(struct hitchhike), GFP_KERNEL);
-			if(!bio->hit)
-				return -ENOMEM;
-			if (unlikely(copy_from_user(bio->hit, dio->iocb->hit, sizeof(struct hitchhike)))){
-				return -EFAULT;
-			}
 
+			//zhengxd: init bi_size with data_len
+			bio->bi_iter.bi_size = dio->iocb->data_len;
+			bio->hit = dio->iocb->hit;
 			u64 len, end;
 			int iter;
 			if(bio->hit->in_use){
@@ -412,12 +403,16 @@ iomap_dio_bio_actor(struct inode *inode, loff_t pos, loff_t length,
 					struct iomap iomap_t = { .type = IOMAP_HOLE };
 					struct iomap srcmap_t = { .type = IOMAP_HOLE };
 					ret = dio->iocb->ops->iomap_begin(inode, pos, len, iomap->flags, &iomap_t, &srcmap_t);
-					if (ret)
+					if (ret){
+						bio_put(bio);
 						return ret;
+					}
 					if (WARN_ON(iomap_t.offset > pos)) {
+						bio_put(bio);
 						return -EIO;
 					}
 					if (WARN_ON(iomap_t.length == 0)) {
+						bio_put(bio);
 						return -EIO;
 					}
 					
@@ -430,6 +425,8 @@ iomap_dio_bio_actor(struct inode *inode, loff_t pos, loff_t length,
 					// lba in 512B
 					if(len != 4096){
 						printk("----iomap hit error: length is %lld", len);
+						bio_put(bio);
+						return -EIO;
 					}
 					bio->hit->addr[iter] = iomap_sector(&iomap_t, pos);
 				
@@ -456,11 +453,15 @@ iomap_dio_bio_actor(struct inode *inode, loff_t pos, loff_t length,
 
 		nr_pages = bio_iov_vecs_to_alloc(dio->submit.iter,
 						 BIO_MAX_VECS);
+		if (bio->hit_enabled) {
+			if(nr_pages > 0){
+				printk("----iomap dio error: nrpage is %d",nr_pages);
+			}
+		}
+		//zhengxd: hit only submit once
 		iomap_dio_submit_bio(dio, iomap, bio, pos);
 		pos += n;
-		// if(bio->hit_enabled){
-		// 	printk(KERN_DEBUG "----iomap: nr_pages is %d----\n",nr_pages);
-		// }
+
 	} while (nr_pages);
 
 	/*
@@ -631,9 +632,11 @@ __iomap_dio_rw(struct kiocb *iocb, struct iov_iter *iter,
 	if (iov_iter_rw(iter) == READ) {
 		if (pos >= dio->i_size)
 			goto out_free_dio;
-		// zhengxd: set dirty flag, x2rp dont set
-		if (iter_is_iovec(iter) && !iocb->hit_enabled)
+		// zhengxd: set dirty flag
+		if (iter_is_iovec(iter))
 			dio->flags |= IOMAP_DIO_DIRTY;
+		// if (iter_is_iovec(iter) && !iocb->hit_enabled)
+		// 	dio->flags |= IOMAP_DIO_DIRTY;
 	} else {
 		iomap_flags |= IOMAP_WRITE;
 		dio->flags |= IOMAP_DIO_WRITE;
@@ -675,6 +678,29 @@ __iomap_dio_rw(struct kiocb *iocb, struct iov_iter *iter,
 
 	if (ret)
 		goto out_free_dio;
+
+	if(iocb->hit_enabled){
+		struct hitchhike *hit;
+		hit = kmalloc(sizeof(struct hitchhike), GFP_KERNEL);
+		if(!hit){
+			goto out_free_dio;
+		}
+		if (unlikely(copy_from_user(hit, dio->iocb->hit, sizeof(struct hitchhike)))){
+			goto out_free_dio;
+		}
+		dio->iocb->hit = NULL;
+		dio->iocb->hit = hit;
+
+		int i;
+		for(i = 0; i <= iocb->hit->max && i <= HIT_MAX; i++){
+			ret = rw_verify_area(READ, iocb->ki_filp, &iocb->hit->addr[i], data_len);
+			if (ret)
+				goto out_free_dio;
+			ret = filemap_write_and_wait_range(mapping, iocb->hit->addr[i], (iocb->hit->addr[i] + data_len - 1));
+			if (ret)
+				goto out_free_dio;
+		}
+	}
 
 	if (iov_iter_rw(iter) == WRITE) {
 		/*
@@ -734,6 +760,8 @@ __iomap_dio_rw(struct kiocb *iocb, struct iov_iter *iter,
 	 *so, the do-while loop just execute once
 	 */
 		if(iocb->hit_enabled){
+			// iomap_dio_bio_actor: copied is 4096(iov_iter_reexpand(dio->submit.iter, orig_count - copied);)
+			// so we need set count == 0;
 			iov_iter_reexpand(iter, 0);
 		}
 	} while ((count = iov_iter_count(iter)) > 0);

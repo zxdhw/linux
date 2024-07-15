@@ -2216,7 +2216,7 @@ blk_qc_t blk_mq_submit_bio(struct bio *bio)
 	
 	blk_queue_bounce(q, &bio);
 	//zhengxd: if(bio > max_sectors || segments >= max_segments) 
-
+	//zhengxd: fixme, check bufferlen && max
 	if(bio->hit_enabled && bio->hit->in_use){
 		nr_segs = bio->hit->max+2;
 	}else if(bio->hit_enabled && !bio->hit->in_use){

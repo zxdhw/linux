@@ -797,7 +797,7 @@ static blk_status_t nvme_pci_setup_prps_hit(struct nvme_dev *dev,
 	// init start prp
 	cmnd->dptr.prp1 = cpu_to_le64(sg_dma_address(iod->sg));
 	// zhengxd: fixme, prp2 dont use in driver
-	cmnd->dptr.prp2 = cpu_to_le64(iod->first_dma);
+	// cmnd->dptr.prp2 = cpu_to_le64(iod->first_dma);
 
 	sg = sg_next(sg);
 	dma_len = sg_dma_len(sg);
@@ -1040,8 +1040,6 @@ static blk_status_t nvme_map_metadata(struct nvme_dev *dev, struct request *req,
 // static void nvme_submit_work(struct work_struct *work){
 static void nvme_submit_cmd_work(struct request *req, struct nvme_command *cnmdp, struct nvme_queue *nvmeq){
 
-	req->hit_main=0;
-	req->hit_value=0;
 	if (req->bio->hit && !req->bio->hit->in_use) {
 		/* nromal io */
 		return;
@@ -1081,6 +1079,9 @@ retry:
 		__le64 *prp_list = list[0];
 		if(data_len == 4096){
 				req->hit_command[iter].rw.dptr.prp1 = prp_list[iter];
+				if((prp_list[iter] & (4096 - 1)) != 0){
+					printk("----nvme_submit_work: dma dismatch error\n");
+				}
 		}else{
 			printk("----nvme_submit_work: length dismatch error\n");
 			return;
@@ -1151,6 +1152,8 @@ static blk_status_t nvme_queue_rq(struct blk_mq_hw_ctx *hctx,
 	if(req->bio && req->bio->hit_enabled){
 		// ktime_t hit_cmd_start = ktime_get();
 		req->hit = 1;
+		req->hit_main=0;
+		req->hit_value=0;
 		nvme_submit_cmd_work(req,&cmnd,nvmeq);
 		// atomic_long_inc(&hit_cmd_count);
 		// atomic_long_add(ktime_sub(ktime_get(), hit_cmd_start), &hit_cmd_time);

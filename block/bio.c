@@ -1056,7 +1056,6 @@ static int __bio_iov_iter_get_pages(struct bio *bio, struct iov_iter *iter)
 		} else {
 			if (WARN_ON_ONCE(bio_full(bio, len)))
                                 return -EINVAL;
-			//zhengxd: modify bio->bi_iter.bi_size
 			__bio_add_page(bio, page, len, offset);
 		}
 		offset = 0;

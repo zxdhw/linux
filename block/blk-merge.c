@@ -254,7 +254,7 @@ static struct bio *blk_bio_segment_split(struct request_queue *q,
 	const unsigned max_segs = queue_max_segments(q);
 
 	if(bio->hit_enabled){
-		bio_for_each_bvec_xrp(bv, bio, iter) {
+		bio_for_each_bvec_hit(bv, bio, iter) {
 
 			//zhengxd: max_sectors: 1024, max_segs =127(==/sys/block/nvme*/queue/max_segments)
 			if ( (nsegs < max_segs) && (sectors + (bv.bv_len >> 9) <= max_sectors)) {
@@ -509,13 +509,15 @@ static int __blk_bios_map_sg(struct request_queue *q, struct bio *bio,
 
 	if(bio->hit_enabled){
 		for_each_bio(bio) {
-			bio_for_each_bvec_xrp(bvec, bio, iter) {
+			bio_for_each_bvec_hit(bvec, bio, iter) {
 	
 				if (bvec.bv_offset + bvec.bv_len <= PAGE_SIZE){
 					nsegs += __blk_bvec_map_sg(bvec, sglist, sg);
 					// printk("----sgl map single:  sglist length is %d, offset is %d----\n",(*sg)->length,(*sg)->offset);
 				} else{
-					nsegs += blk_bvec_map_sg(q, &bvec, sglist, sg);
+					printk("----sgl map single Error:  sglist length is %d, offset is %d----\n",(*sg)->length,(*sg)->offset);
+					nsegs = 0;
+					break; 
 				}
 			}
 		}

@@ -242,6 +242,8 @@ extern atomic_long_t aio_hit_time;
 extern atomic_long_t aio_hit_count;
 extern atomic_long_t read_iter_time;
 extern atomic_long_t read_iter_count;
+extern atomic_long_t verify_time;
+extern atomic_long_t verify_count;
 ktime_t io_start;
 /*-----zhengxd kernel stat----*/
 
@@ -1562,9 +1564,16 @@ static int aio_read(struct kiocb *req, const struct iocb *iocb,
 	ret = aio_setup_rw(READ, iocb, &iovec, vectored, compat, &iter);
 	if (ret < 0)
 		return ret;
+
+	// zhengxd: kernel stat
+	// ktime_t verify_start = ktime_get();
+
 	ret = rw_verify_area(READ, file, &req->ki_pos, iov_iter_count(&iter));
 
 	// zhengxd: kernel stat : use for io queue == 1 
+	// atomic_long_inc(&verify_count);
+	// atomic_long_add(ktime_sub(ktime_get(), verify_start), &verify_time);
+	
 	// atomic_long_inc(&aio_count);
 	// atomic_long_add(ktime_sub(ktime_get(), io_start), &aio_time);
 	

@@ -1991,8 +1991,8 @@ static void blk_mq_bio_to_request(struct request *rq, struct bio *bio,
 extern atomic_long_t block_time;
 extern atomic_long_t block_count;
 extern ktime_t block_start;
-extern atomic_long_t driver_time;
-extern atomic_long_t driver_count;
+extern atomic_long_t queue_rq_time;
+extern atomic_long_t queue_rq_count;
 
 static blk_status_t __blk_mq_issue_directly(struct blk_mq_hw_ctx *hctx,
 					    struct request *rq,
@@ -2018,11 +2018,11 @@ static blk_status_t __blk_mq_issue_directly(struct blk_mq_hw_ctx *hctx,
 	// atomic_long_inc(&block_count);
 	// atomic_long_add(ktime_sub(ktime_get(), block_start), &block_time);
 
-	// ktime_t driver_start = ktime_get();
+	// ktime_t queue_rq_start = ktime_get();
 	ret = q->mq_ops->queue_rq(hctx, &bd);
 
-	// atomic_long_inc(&driver_count);
-	// atomic_long_add(ktime_sub(ktime_get(), driver_start), &driver_time);
+	// atomic_long_inc(&queue_rq_count);
+	// atomic_long_add(ktime_sub(ktime_get(), queue_rq_start), &queue_rq_time);
 
 	switch (ret) {
 	case BLK_STS_OK:

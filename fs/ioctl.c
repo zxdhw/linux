@@ -922,6 +922,16 @@ EXPORT_SYMBOL(fs_start);
 EXPORT_SYMBOL(fs_time);
 EXPORT_SYMBOL(fs_count);
 
+atomic_long_t file_read_iter_time;
+atomic_long_t file_read_iter_count;
+EXPORT_SYMBOL(file_read_iter_time);
+EXPORT_SYMBOL(file_read_iter_count);
+
+atomic_long_t submit_bio_time;
+atomic_long_t submit_bio_count;
+EXPORT_SYMBOL(submit_bio_time);
+EXPORT_SYMBOL(submit_bio_count);
+
 atomic_long_t block_time;
 atomic_long_t block_count;
 atomic_long_t block_start;
@@ -929,10 +939,25 @@ EXPORT_SYMBOL(block_time);
 EXPORT_SYMBOL(block_count);
 EXPORT_SYMBOL(block_start);
 
+atomic_long_t bio_submit_time;
+atomic_long_t bio_submit_count;
+EXPORT_SYMBOL(bio_submit_time);
+EXPORT_SYMBOL(bio_submit_count);
+
 atomic_long_t driver_time;
 atomic_long_t driver_count;
 EXPORT_SYMBOL(driver_time);
 EXPORT_SYMBOL(driver_count);
+
+atomic_long_t queue_rq_time;
+atomic_long_t queue_rq_count;
+EXPORT_SYMBOL(queue_rq_time);
+EXPORT_SYMBOL(queue_rq_count);
+
+atomic_long_t verify_time;
+atomic_long_t verify_count;
+EXPORT_SYMBOL(verify_time);
+EXPORT_SYMBOL(verify_count);
 
 atomic_long_t dio_time;
 atomic_long_t dio_count;
@@ -989,20 +1014,21 @@ atomic_long_t sq_count;
 EXPORT_SYMBOL(sq_time);
 EXPORT_SYMBOL(sq_count);
 
-atomic_long_t sq_write_time;
-atomic_long_t sq_write_count;
-EXPORT_SYMBOL(sq_write_time);
-EXPORT_SYMBOL(sq_write_count);
+atomic_long_t cmd_time;
+atomic_long_t cmd_count;
+EXPORT_SYMBOL(cmd_time);
+EXPORT_SYMBOL(cmd_count);
 
-atomic_long_t lock_time;
-atomic_long_t lock_count;
-EXPORT_SYMBOL(lock_time);
-EXPORT_SYMBOL(lock_count);
+atomic_long_t dma_unmap_time;
+atomic_long_t dma_unmap_count;
+EXPORT_SYMBOL(dma_unmap_time);
+EXPORT_SYMBOL(dma_unmap_count);
 
 atomic_long_t interrupt_time;
 atomic_long_t interrupt_count;
 EXPORT_SYMBOL(interrupt_time);
 EXPORT_SYMBOL(interrupt_count);
+
 
 SYSCALL_DEFINE1(print_hit_stats, struct hit_stats __user *, buf)
 {
@@ -1012,14 +1038,25 @@ SYSCALL_DEFINE1(print_hit_stats, struct hit_stats __user *, buf)
 	long _aio_count = atomic_long_xchg(&aio_count, 0);
 	long _aio_hit_time= atomic_long_xchg(&aio_hit_time, 0);
 	long _aio_hit_count = atomic_long_xchg(&aio_hit_count, 0);
+	long _verify_time= atomic_long_xchg(&verify_time, 0);
+	long _verify_count = atomic_long_xchg(&verify_count, 0);
 	long _read_iter_time= atomic_long_xchg(&read_iter_time, 0);
 	long _read_iter_count = atomic_long_xchg(&read_iter_count, 0);
+	long _file_read_iter_time = atomic_long_xchg(&file_read_iter_time, 0);
+	long _file_read_iter_count = atomic_long_xchg(&file_read_iter_count, 0);
 	long _fs_time = atomic_long_xchg(&fs_time, 0);
 	long _fs_count = atomic_long_xchg(&fs_count, 0);
+	long _submit_bio_time = atomic_long_xchg(&submit_bio_time, 0);
+	long _submit_bio_count = atomic_long_xchg(&submit_bio_count, 0);
 	long _block_time = atomic_long_xchg(&block_time, 0);
 	long _block_count = atomic_long_xchg(&block_count, 0);
+	long _bio_submit_time = atomic_long_xchg(&bio_submit_time, 0);
+	long _bio_submit_count= atomic_long_xchg(&bio_submit_count, 0);
 	long _driver_time = atomic_long_xchg(&driver_time, 0);
 	long _driver_count = atomic_long_xchg(&driver_count, 0);
+	long _queue_rq_time = atomic_long_xchg(&queue_rq_time, 0);
+	long _queue_rq_count = atomic_long_xchg(&queue_rq_count, 0);
+
 	long _dio_time = atomic_long_xchg(&dio_time, 0);
 	long _dio_count= atomic_long_xchg(&dio_count, 0);
 	long _filemap_wait_time = atomic_long_xchg(&filemap_wait_time, 0);
@@ -1042,10 +1079,11 @@ SYSCALL_DEFINE1(print_hit_stats, struct hit_stats __user *, buf)
 	long _hit_cmd_count= atomic_long_xchg(&hit_cmd_count, 0);
 	long _sq_time = atomic_long_xchg(&sq_time, 0);
 	long _sq_count= atomic_long_xchg(&sq_count, 0);
-	long _sq_write_time = atomic_long_xchg(&sq_write_time, 0);
-	long _sq_write_count= atomic_long_xchg(&sq_write_count, 0);
-	long _lock_time = atomic_long_xchg(&lock_time, 0);
-	long _lock_count= atomic_long_xchg(&lock_count, 0);
+	long _cmd_time = atomic_long_xchg(&cmd_time, 0);
+	long _cmd_count= atomic_long_xchg(&cmd_count, 0);
+
+	long _dma_unmap_time = atomic_long_xchg(&dma_unmap_time, 0);
+	long _dma_unmap_count= atomic_long_xchg(&dma_unmap_count, 0);
 	long _interrupt_time = atomic_long_xchg(&interrupt_time, 0);
 	long _interrupt_count= atomic_long_xchg(&interrupt_count, 0);
 
@@ -1062,14 +1100,29 @@ SYSCALL_DEFINE1(print_hit_stats, struct hit_stats __user *, buf)
 		_read_iter_time,
 		_read_iter_count,
 
+		_file_read_iter_time,
+		_file_read_iter_count,
+
 		_fs_time,
 		_fs_count,
+
+		_submit_bio_time,
+		_submit_bio_count,
 
 		_block_time,
 		_block_count,
 
+		_bio_submit_time,
+		_bio_submit_count,
+
 		_driver_time,
 		_driver_count,
+
+		_queue_rq_time,
+		_queue_rq_count,
+
+		_verify_time,
+		_verify_count,
 
 		_dio_time,
 		_dio_count,
@@ -1104,48 +1157,17 @@ SYSCALL_DEFINE1(print_hit_stats, struct hit_stats __user *, buf)
 		_sq_time,
 		_sq_count,
 
-		_sq_write_time,
-		_sq_write_count,
+		_cmd_time,
+		_cmd_count,
 
-		_lock_time,
-		_lock_count,
 
+		_dma_unmap_time,
+		_dma_unmap_count,
+		
 		_interrupt_time,
 		_interrupt_count,
-	};
 
-	// printk("aio time: %ld\n", _aio_time);
-	// printk("aio count: %ld\n", _aio_count);
-	// printk("aio hit time: %ld\n", _aio_hit_time);
-	// printk("aio hit count: %ld\n", _aio_hit_count);
-	// printk("read iter time: %ld\n", _read_iter_time);
-	// printk("read iter count: %ld\n", _read_iter_count);
-	// printk("fs time: %ld\n", _fs_time);
-	// printk("fs count: %ld\n", _fs_count);
-	// printk("block time: %ld\n", _block_time);
-	// printk("block count: %ld\n", _block_count);
-	// printk("driver time: %ld\n", _driver_time);
-	// printk("dirver count: %ld\n",_driver_count);
-	// printk("dio time: %ld\n",_dio_time);
-	// printk("dio count: %ld\n", _dio_count);
-	// printk("iomap time: %ld\n",_iomap_time);
-	// printk("iomap count: %ld\n", _iomap_count);
-	// printk("page time: %ld\n",_get_page_time);
-	// printk("page count: %ld\n", _get_page_count);
-	// printk("bio time: %ld\n",_bio_time);
-	// printk("bio count: %ld\n", _bio_count);
-	// printk("hit buf time: %ld\n",_hit_buf_time);
-	// printk("hit buf count: %ld\n", _hit_buf_count);
-	// printk("req time: %ld\n",_req_time);
-	// printk("req count: %ld\n", _req_count);
-	// printk("dma time: %ld\n",_dma_time);
-	// printk("dma count: %ld\n", _dma_count);
-	// printk("sq time: %ld\n",_sq_time);
-	// printk("sq count: %ld\n", _sq_count);
-	// printk("sq write time: %ld\n",_sq_write_time);
-	// printk("sq write count: %ld\n", _sq_write_count);
-	// printk("interrupt time: %ld\n",_interrupt_time);
-	// printk("interrupt count: %ld\n", _interrupt_count);
+	};
 
 	if (buf != NULL && copy_to_user(buf, &stats, sizeof(struct hit_stats)))
 		return -EFAULT;

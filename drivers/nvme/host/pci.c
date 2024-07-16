@@ -165,10 +165,8 @@ struct nvme_dev {
 };
 
 /*zhengxd: kernel stat*/
-extern atomic_long_t sq_write_time;
-extern atomic_long_t sq_write_count;
-extern atomic_long_t lock_time;
-extern atomic_long_t lock_count;
+extern atomic_long_t cmd_time;
+extern atomic_long_t cmd_count;
 extern atomic_long_t driver_time;
 extern atomic_long_t driver_count;
 extern atomic_long_t dma_time;
@@ -177,6 +175,11 @@ extern atomic_long_t sq_time;
 extern atomic_long_t sq_count;
 extern atomic_long_t hit_cmd_time;
 extern atomic_long_t hit_cmd_count;
+extern atomic_long_t dma_unmap_time;
+extern atomic_long_t dma_unmap_count;
+extern atomic_long_t interrupt_time;
+extern atomic_long_t interrupt_count;
+
 /*zhengxd: kernel stat*/
 
 static int io_queue_depth_set(const char *val, const struct kernel_param *kp)
@@ -1123,11 +1126,14 @@ static blk_status_t nvme_queue_rq(struct blk_mq_hw_ctx *hctx,
 	if (unlikely(!test_bit(NVMEQ_ENABLED, &nvmeq->flags)))
 		return BLK_STS_IOERR;
 
+	// ktime_t cmd_start = ktime_get();
 	//zhengxd: init slba、length, tag and command id(need < 1024)
 	ret = nvme_setup_cmd(ns, req, &cmnd);
 	if (ret)
 		return ret;
 
+	// atomic_long_inc(&cmd_count);
+	// atomic_long_add(ktime_sub(ktime_get(), cmd_start), &cmd_time);
 	// zhengxd: use sgl map
 	// zhengxd: kernel stat
 	// ktime_t dma_start = ktime_get();
@@ -1187,9 +1193,6 @@ out_free_cmd:
 	return ret;
 }
 
-extern atomic_long_t interrupt_time;
-extern atomic_long_t interrupt_count;
-
 struct nvme_work {
     struct work_struct work;
     struct nvme_queue *nvmeq;
@@ -1203,12 +1206,17 @@ static void nvme_pci_complete_rq(struct request *req)
 {
 	struct nvme_iod *iod = blk_mq_rq_to_pdu(req);
 	struct nvme_dev *dev = iod->nvmeq->dev;
+	// zhengxd: kernel stat
+	// ktime_t unmap_start = ktime_get();
 
 	if (blk_integrity_rq(req))
 		dma_unmap_page(dev->dev, iod->meta_dma,
 					rq_integrity_vec(req)->bv_len, rq_data_dir(req));
 	if (blk_rq_nr_phys_segments(req))
 		nvme_unmap_data(dev, req);
+	
+	// atomic_long_inc(&dma_unmap_count);
+	// atomic_long_add(ktime_sub(ktime_get(), unmap_start), &dma_unmap_time);
 	nvme_complete_rq(req);
 }
 
@@ -1245,12 +1253,6 @@ static inline void nvme_handle_cqe(struct nvme_queue *nvmeq, u16 idx)
 	struct nvme_completion *cqe = &nvmeq->cqes[idx];
 	__u16 command_id = READ_ONCE(cqe->command_id);
 	struct request *req;
-
-	//zhegnxd: command id < 1024
-	// u16 hit_id = command_id >> 10;
-	// if(io_queue_depth <= 1024){
-	// 	command_id &= 0x3ff;
-	// }
 	
 	/*
 	 * AEN requests are special as they don't time out and can
@@ -1276,13 +1278,13 @@ static inline void nvme_handle_cqe(struct nvme_queue *nvmeq, u16 idx)
 		req->hit_main=1;
 	}
 	
-	//hit id (1 ~ 63)
+	//max : 0 ~ 126
 	if( req->bio && req->bio->hit){
 		req->hit_value++;
 	}
 
 	//zhengxd: max: max index(0~125)
-	if( req->bio && req->bio->hit && (req->hit_value == (req->bio->hit->max + 2))){
+	if(req->bio && req->bio->hit && (req->hit_value == (req->bio->hit->max + 2))){
 		req->done = 1;
 	}
 
@@ -1327,6 +1329,7 @@ static inline int nvme_process_cq(struct nvme_queue *nvmeq)
 
 static irqreturn_t nvme_irq(int irq, void *data)
 {
+	// ktime_t irq_start = ktime_get();
 	struct nvme_queue *nvmeq = data;
 	irqreturn_t ret = IRQ_NONE;
 
@@ -1339,6 +1342,8 @@ static irqreturn_t nvme_irq(int irq, void *data)
 		ret = IRQ_HANDLED;
 	wmb();
 
+	// atomic_long_inc(&interrupt_count);
+	// atomic_long_add(ktime_sub(ktime_get(), irq_start), &interrupt_time);
 	return ret;
 }
 
@@ -1779,7 +1784,7 @@ static int nvme_alloc_queue(struct nvme_dev *dev, int qid, int depth)
 	nvmeq->sqes = qid ? dev->io_sqes : NVME_ADM_SQES;
 	nvmeq->q_depth = depth;
 	//zhengxd: print queue depth
-	printk("----nvmeq depth is %d----\n",nvmeq->q_depth);
+	// printk("----nvmeq depth is %d----\n",nvmeq->q_depth);
 	nvmeq->cqes = dma_alloc_coherent(dev->dev, CQ_SIZE(nvmeq),
 					 &nvmeq->cq_dma_addr, GFP_KERNEL);
 	if (!nvmeq->cqes)
@@ -2029,10 +2034,9 @@ static int nvme_create_io_queues(struct nvme_dev *dev)
 {
 	unsigned i, max, rw_queues;
 	int ret = 0;
-
+	//zhengxd: print queue depth
+	printk("----create io queue: depth is %d----\n",dev->q_depth);
 	for (i = dev->ctrl.queue_count; i <= dev->max_qid; i++) {
-		//zhengxd: print queue depth
-		printk("----create io queue %d, depth is %d----\n",i,dev->q_depth);
 		if (nvme_alloc_queue(dev, i, dev->q_depth)) {
 			ret = -ENOMEM;
 			break;

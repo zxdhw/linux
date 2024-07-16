@@ -1526,14 +1526,29 @@ struct hit_stats {
 	long read_iter_time;
 	long read_iter_count;
 
+	long file_read_iter_time;
+	long file_read_iter_count;
+
 	long fs_time;
 	long fs_count;
+
+	long submit_bio_time;
+	long submit_bio_count;
 
 	long block_time;
 	long block_count;
 
+	long bio_submit_time;
+	long bio_submit_count;
+
 	long driver_time;
 	long driver_count;
+
+	long queue_rq_time;
+	long queue_rq_count;
+
+	long verify_time;
+	long verify_count;
 
 	long dio_time;
 	long dio_count;
@@ -1568,14 +1583,15 @@ struct hit_stats {
 	long sq_time;
 	long sq_count;
 
-	long sq_write_time;
-	long sq_write_count;
+	long cmd_time;
+	long cmd_count;
 
-	long lock_time;
-	long lock_count;
+	long dma_unmap_time;
+	long dma_unmap_count;
 
 	long interrupt_time;
 	long interrupt_count;
+
 };
 
 void ebpf_dump_page(uint8_t *page_image, uint64_t size);

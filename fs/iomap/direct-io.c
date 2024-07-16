@@ -72,8 +72,8 @@ extern atomic_long_t fs_count;
 extern ktime_t fs_start;
 extern atomic_long_t dio_time;
 extern atomic_long_t dio_count;
-extern atomic_long_t block_time;
-extern atomic_long_t block_count;
+extern atomic_long_t submit_bio_time;
+extern atomic_long_t submit_bio_count;
 
 /*----zhengxd kernel stat*/
 
@@ -94,18 +94,22 @@ static void iomap_dio_submit_bio(struct iomap_dio *dio, struct iomap *iomap,
 
 	if (dio->iocb->ki_flags & IOCB_HIPRI)
 		bio_set_polled(bio, dio->iocb);
-	
+	dio->submit.last_queue = bdev_get_queue(iomap->bdev);
+
 	// atomic_long_inc(&fs_count);
 	// atomic_long_add(ktime_sub(ktime_get(), fs_start), &fs_time);
 
-	dio->submit.last_queue = bdev_get_queue(iomap->bdev);
+	// ktime_t submit_bio_start=ktime_get();
 	if (dio->dops && dio->dops->submit_io)
 		dio->submit.cookie = dio->dops->submit_io(
 				file_inode(dio->iocb->ki_filp),
 				iomap, bio, pos);
 	else
 		dio->submit.cookie = submit_bio(bio);
-		
+	
+	// atomic_long_inc(&submit_bio_count);
+	// atomic_long_add(ktime_sub(ktime_get(), submit_bio_start), &submit_bio_time);
+
 }
 
 ssize_t iomap_dio_complete(struct iomap_dio *dio)
@@ -362,8 +366,8 @@ iomap_dio_bio_actor(struct inode *inode, loff_t pos, loff_t length,
 
 		// zhengxd: kernel stat
 		// if(bio->hit_enabled){
-			// atomic_long_inc(&bio_count);
-			// atomic_long_add(ktime_sub(ktime_get(), bio_start), &bio_time);
+		// atomic_long_inc(&bio_count);
+		// atomic_long_add(ktime_sub(ktime_get(), bio_start), &bio_time);
 		// }
 
 		// zhengxd: kernel stat

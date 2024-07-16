@@ -37,6 +37,12 @@
 #include "acl.h"
 #include "truncate.h"
 
+extern atomic_long_t file_read_iter_time;
+extern atomic_long_t file_read_iter_count;
+extern ktime_t fs_start;
+
+
+
 static bool ext4_dio_supported(struct inode *inode)
 {
 	if (IS_ENABLED(CONFIG_FS_ENCRYPTION) && IS_ENCRYPTED(inode))
@@ -79,6 +85,10 @@ static ssize_t ext4_dio_read_iter(struct kiocb *iocb, struct iov_iter *to)
 	inode_unlock_shared(inode);
 
 	file_accessed(iocb->ki_filp);
+	
+	// zhengxd: kernel stat
+	// atomic_long_inc(&file_read_iter_count);
+	// atomic_long_add(ktime_sub(ktime_get(), fs_start), &file_read_iter_time);
 	return ret;
 }
 
@@ -111,7 +121,6 @@ static ssize_t ext4_dax_read_iter(struct kiocb *iocb, struct iov_iter *to)
 }
 #endif
 
-extern ktime_t fs_start;
 // zhengxd: ext4 entry
 static ssize_t ext4_file_read_iter(struct kiocb *iocb, struct iov_iter *to)
 {

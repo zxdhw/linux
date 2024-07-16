@@ -63,6 +63,10 @@ EXPORT_TRACEPOINT_SYMBOL_GPL(block_rq_insert);
 
 DEFINE_IDA(blk_queue_ida);
 
+extern atomic_long_t bio_submit_time;
+extern atomic_long_t bio_submit_count;
+extern ktime_t block_start;
+
 /*
  * For queue allocation
  */
@@ -992,10 +996,6 @@ static blk_qc_t __submit_bio_noacct(struct bio *bio)
 	return ret;
 }
 
-extern atomic_long_t block_time;
-extern atomic_long_t block_count;
-extern ktime_t block_start;
-
 static blk_qc_t __submit_bio_noacct_mq(struct bio *bio)
 {
 	struct bio_list bio_list[2] = { };
@@ -1019,8 +1019,8 @@ static blk_qc_t __submit_bio_noacct_mq(struct bio *bio)
 
 	// zhengxd: kernel stat
 	// if(bio->hit_enabled){
-		// atomic_long_inc(&block_count);
-		// atomic_long_add(ktime_sub(ktime_get(), block_start), &block_time);
+		// atomic_long_inc(&bio_submit_count);
+		// atomic_long_add(ktime_sub(ktime_get(), block_start), &bio_submit_time);
 	// }
 
 	current->bio_list = NULL;
